@@ -1,0 +1,1 @@
+C:\Prog\GENie\bin\windows\genie.exe qbs
