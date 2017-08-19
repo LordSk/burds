@@ -62,6 +62,8 @@ struct App
 
     Vec2 applePosList[APPLE_POS_LIST_COUNT];
     Transform appleTf[BIRD_COUNT];
+
+    Line targetLine[BIRD_COUNT];
 } app;
 
 void resetBirds()
@@ -129,6 +131,11 @@ void resetBirds()
         app.appleTf[i].size.y = 20;
         app.appleTf[i].center.x = 10;
         app.appleTf[i].center.y = 10;
+    }
+
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        app.targetLine[i].c1 = app.birdColor[i];
+        app.targetLine[i].c2 = app.birdColor[i];
     }
 }
 
@@ -347,8 +354,15 @@ void updateBirdCore(f64 delta)
         }
     }
 
+    // update apples position
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         app.appleTf[i].pos = app.applePosList[app.birdApplePositionId[i]];
+    }
+
+    // update target lines
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        app.targetLine[i].p1 = app.birdPos[i];
+        app.targetLine[i].p2 = app.appleTf[i].pos;
     }
 }
 
@@ -366,6 +380,8 @@ void update(f64 delta)
     updateBirdCore(delta);
 
     glClear(GL_COLOR_BUFFER_BIT);
+
+    drawLineBatch(app.targetLine, BIRD_COUNT);
 
     drawSpriteBatch(app.tex_birdWing, app.birdLeftWingTf, app.birdColor, BIRD_COUNT);
     drawSpriteBatch(app.tex_birdWing, app.birdRightWingTf, app.birdColor, BIRD_COUNT);

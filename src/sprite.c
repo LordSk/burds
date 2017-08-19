@@ -95,9 +95,17 @@ struct
     GLuint vboColors;
     GLuint vaoSprites;
 
-    GLuint shaderProgram;
+    GLuint vboLines;
+    GLuint vaoLines;
+
+    GLuint programSprite;
     GLint uViewMatrix;
     GLint uTexture;
+
+    struct {
+        GLuint program;
+        GLint uViewMatrix;
+    } shaderLine;
 } state;
 
 enum {
@@ -133,7 +141,7 @@ GLuint glMakeShader(GLenum type, const char* pFileBuff, i32 fileSize)
     return shader;
 }
 
-i32 initSpriteState(i32 winWidth, i32 winHeight)
+i32 initSpriteShader()
 {
     glGenBuffers(1, &state.vboQuad);
     glGenBuffers(1, &state.vboModelMats);
@@ -249,28 +257,143 @@ i32 initSpriteState(i32 winWidth, i32 winHeight)
         return FALSE;
     }
 
-    state.shaderProgram = glCreateProgram();
-    glAttachShader(state.shaderProgram, vertexShader);
-    glAttachShader(state.shaderProgram, fragmentShader);
-    glLinkProgram(state.shaderProgram);
+    state.programSprite = glCreateProgram();
+    glAttachShader(state.programSprite, vertexShader);
+    glAttachShader(state.programSprite, fragmentShader);
+    glLinkProgram(state.programSprite);
 
     // check
     GLint linkResult = GL_FALSE;
-    glGetProgramiv(state.shaderProgram, GL_LINK_STATUS, &linkResult);
+    glGetProgramiv(state.programSprite, GL_LINK_STATUS, &linkResult);
 
     if(!linkResult) {
         int logLength = 0;
-        glGetProgramiv(state.shaderProgram, GL_INFO_LOG_LENGTH, &logLength);
+        glGetProgramiv(state.programSprite, GL_INFO_LOG_LENGTH, &logLength);
         char* logBuff =  (char*)malloc(logLength);
-        glGetProgramInfoLog(state.shaderProgram, logLength, NULL, logBuff);
+        glGetProgramInfoLog(state.programSprite, logLength, NULL, logBuff);
         LOG("Error [program link]: %s", logBuff);
         free(logBuff);
-        glDeleteProgram(state.shaderProgram);
+        glDeleteProgram(state.programSprite);
         return FALSE;
     }
 
-    state.uViewMatrix = glGetUniformLocation(state.shaderProgram, "uViewMatrix");
-    state.uTexture = glGetUniformLocation(state.shaderProgram, "uTexture");
+    state.uViewMatrix = glGetUniformLocation(state.programSprite, "uViewMatrix");
+    state.uTexture = glGetUniformLocation(state.programSprite, "uTexture");
+
+    if(state.uViewMatrix == -1 || state.uTexture == -1) {
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+i32 initLineShader()
+{
+    // LINES
+    glGenBuffers(1, &state.vboLines);
+    glGenVertexArrays(1, &state.vaoLines);
+
+    glBindVertexArray(state.vaoLines);
+
+    glBindBuffer(GL_ARRAY_BUFFER, state.vboLines);
+    glBufferData(GL_ARRAY_BUFFER, BATCH_MAX_COUNT * sizeof(Line), 0, GL_DYNAMIC_DRAW);
+
+    // vertex position
+    glVertexAttribPointer(
+        LAYOUT_POSITION,
+        2,
+        GL_FLOAT,
+        GL_FALSE,
+        sizeof(Vec2)+sizeof(Color3)+1,
+        (void*)0
+    );
+    glEnableVertexAttribArray(LAYOUT_POSITION);
+
+    // line color
+    glVertexAttribPointer(
+        LAYOUT_COLOR,
+        3,
+        GL_UNSIGNED_BYTE,
+        GL_TRUE,
+        sizeof(Vec2)+sizeof(Color3)+1,
+        (void*)(sizeof(Vec2))
+    );
+    glEnableVertexAttribArray(LAYOUT_COLOR);
+
+    const char* vertexShaderStr = MAKE_STR(
+          #version 330 core\n
+          layout(location = 0) in vec2 position;\n
+          layout(location = 2) in vec3 color;\n
+          uniform mat4 uViewMatrix;\n
+
+          out vec3 vert_color;
+
+          void main()\n
+          {\n
+              vert_color = color;
+              gl_Position = uViewMatrix * vec4(position, 0.0, 1.0);\n
+          }
+    );
+
+    const char* fragmentShaderStr = MAKE_STR(
+        #version 330 core\n
+
+        in vec3 vert_color;\n
+        out vec4 fragmentColor;\n
+
+        void main()\n
+        {\n
+            fragmentColor = vec4(vert_color, 1.0);\n
+        }
+    );
+
+    GLuint vertexShader = glMakeShader(GL_VERTEX_SHADER, vertexShaderStr, strlen(vertexShaderStr));
+    GLuint fragmentShader = glMakeShader(GL_FRAGMENT_SHADER, fragmentShaderStr, strlen(fragmentShaderStr));
+
+    if(!vertexShader | !fragmentShader) {
+        return FALSE;
+    }
+
+    state.shaderLine.program = glCreateProgram();
+    glAttachShader(state.shaderLine.program, vertexShader);
+    glAttachShader(state.shaderLine.program, fragmentShader);
+    glLinkProgram(state.shaderLine.program);
+
+    // check
+    GLint linkResult = GL_FALSE;
+    glGetProgramiv(state.shaderLine.program, GL_LINK_STATUS, &linkResult);
+
+    if(!linkResult) {
+        int logLength = 0;
+        glGetProgramiv(state.shaderLine.program, GL_INFO_LOG_LENGTH, &logLength);
+        char* logBuff =  (char*)malloc(logLength);
+        glGetProgramInfoLog(state.shaderLine.program, logLength, NULL, logBuff);
+        LOG("Error [program link]: %s", logBuff);
+        free(logBuff);
+        glDeleteProgram(state.shaderLine.program);
+        return FALSE;
+    }
+
+    state.shaderLine.uViewMatrix = glGetUniformLocation(state.shaderLine.program, "uViewMatrix");
+
+    if(state.shaderLine.uViewMatrix == -1) {
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+i32 initSpriteState(i32 winWidth, i32 winHeight)
+{
+    if(!initSpriteShader()) {
+        LOG("ERROR: could init sprite shader correctly");
+        return FALSE;
+    }
+
+    if(!initLineShader()) {
+        LOG("ERROR: could init line shader correctly");
+        return FALSE;
+    }
 
     i32 left = 0;
     i32 right = winWidth;
@@ -293,8 +416,11 @@ i32 initSpriteState(i32 winWidth, i32 winHeight)
     ortho.md[13] = -((top + bottom) / (top - bottom));
     ortho.md[14] = -((farPlane + nearPlane) / (farPlane - nearPlane));
 
-    glUseProgram(state.shaderProgram);
+    glUseProgram(state.programSprite);
     glUniformMatrix4fv(state.uViewMatrix, 1, GL_FALSE, ortho.md);
+
+    glUseProgram(state.shaderLine.program);
+    glUniformMatrix4fv(state.shaderLine.uViewMatrix, 1, GL_FALSE, ortho.md);
 
     // culling
     //glEnable(GL_CULL_FACE);
@@ -367,8 +493,20 @@ void drawSpriteBatch(i32 textureId, const Transform* transform, const Color3* co
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, textureId);
 
-    glUseProgram(state.shaderProgram);
+    glUseProgram(state.programSprite);
     glUniform1i(state.uTexture, 1);
 
     glDrawArraysInstanced(GL_TRIANGLES, 0, 6, count);
+}
+
+void drawLineBatch(const Line* lines, const i32 count)
+{
+    glBindBuffer(GL_ARRAY_BUFFER, state.vboLines);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, count * sizeof(Line), lines);
+
+    glBindVertexArray(state.vaoLines);
+
+    glUseProgram(state.shaderLine.program);
+
+    glDrawArrays(GL_LINES, 0, count * 2);
 }
