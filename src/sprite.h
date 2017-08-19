@@ -7,6 +7,8 @@ typedef union
     struct { f32 x, y; };
 } Vec2;
 
+f32 vec2Distance(Vec2* va, Vec2* vb);
+
 typedef struct
 {
     Vec2 pos;

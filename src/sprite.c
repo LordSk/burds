@@ -4,6 +4,12 @@
 #include <gl3w.h>
 #include <math.h>
 
+f32 vec2Distance(Vec2* va, Vec2* vb)
+{
+    return sqrtf((vb->x - va->x) * (vb->x - va->x) +
+           (vb->y - va->y) * (vb->y - va->y));
+}
+
 typedef struct
 {
     f32 md[16];

@@ -21,11 +21,13 @@
 
 #define WING_ANIM_TIME 0.5f
 
-#define FRICTION_AIR_ANGULAR 0.03f
+#define FRICTION_AIR_ANGULAR 0.06f
 #define FRICTION_AIR 0.02f
 
 #define WING_STRENGTH 200.f
 #define WING_STRENGTH_ANGULAR (PI * 0.25f)
+
+#define APPLE_POS_LIST_COUNT 1024
 
 typedef struct
 {
@@ -55,9 +57,80 @@ struct App
     f32 birdFlapRightAnimTime[BIRD_COUNT];
     BirdInput birdInput[BIRD_COUNT];
 
-    Transform appleTf;
-    Color3 appleColor;
+    f32 birdHealth[BIRD_COUNT];
+    i32 birdApplePositionId[BIRD_COUNT];
+
+    Vec2 applePosList[APPLE_POS_LIST_COUNT];
+    Transform appleTf[BIRD_COUNT];
 } app;
+
+void resetBirds()
+{
+    const u32 colorMax = 0xFF;
+    const u32 colorMin = 0x2;
+    const u32 colorDelta = colorMax - colorMin;
+
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        Color3 c;
+        c.r = (rand() % colorDelta) + colorMin;
+        c.g = (rand() % colorDelta) + colorMin;
+        c.b = (rand() % colorDelta) + colorMin;
+        app.birdColor[i] = c;
+    }
+
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        app.birdPos[i].x = rand() % WINDOW_WIDTH;
+        app.birdPos[i].y = rand() % WINDOW_HEIGHT;
+    }
+
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        app.birdBodyTf[i].size.x = BIRD_BODY_WIDTH;
+        app.birdBodyTf[i].size.y = BIRD_BODY_HEIGHT;
+        app.birdBodyTf[i].center.x = BIRD_BODY_WIDTH * 0.5f;
+        app.birdBodyTf[i].center.y = BIRD_BODY_HEIGHT * 0.5f;
+    }
+
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        app.birdLeftWingTf[i].size.x = -BIRD_WING_WIDTH;
+        app.birdLeftWingTf[i].size.y = BIRD_WING_HEIGHT;
+        app.birdLeftWingTf[i].center.x = 0;
+        app.birdLeftWingTf[i].center.y = BIRD_WING_HEIGHT * 0.6f;
+    }
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        app.birdRightWingTf[i].size.x = BIRD_WING_WIDTH;
+        app.birdRightWingTf[i].size.y = BIRD_WING_HEIGHT;
+        app.birdRightWingTf[i].center.x = 0;
+        app.birdRightWingTf[i].center.y = BIRD_WING_HEIGHT * 0.6f;
+    }
+
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        app.birdHealth[i] = 10.f; // seconds
+    }
+
+    memset(app.birdVel, 0, sizeof(app.birdVel));
+    memset(app.birdRot, 0, sizeof(app.birdRot));
+    memset(app.birdAngularVel, 0, sizeof(app.birdAngularVel));
+    memset(app.birdFlapLeftAnimTime, 0, sizeof(app.birdFlapLeftAnimTime));
+    memset(app.birdFlapRightAnimTime, 0, sizeof(app.birdFlapRightAnimTime));
+    memset(app.birdApplePositionId, 0, sizeof(app.birdApplePositionId));
+
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        app.birdRot[i] = (rand() % 10000) / 10000.f * TAU;
+        app.birdAngularVel[i] = -TAU + (rand() % 10000) / 10000.f * TAU * 2.f;
+    }
+
+    for(i32 i = 0; i < APPLE_POS_LIST_COUNT; ++i) {
+        app.applePosList[i].x = rand() % WINDOW_WIDTH;
+        app.applePosList[i].y = rand() % WINDOW_HEIGHT;
+    }
+
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        app.appleTf[i].size.x = 20;
+        app.appleTf[i].size.y = 20;
+        app.appleTf[i].center.x = 10;
+        app.appleTf[i].center.y = 10;
+    }
+}
 
 i32 init()
 {
@@ -109,62 +182,7 @@ i32 init()
         return FALSE;
     }
 
-    const u32 colorMax = 0xFF;
-    const u32 colorMin = 0x2;
-    const u32 colorDelta = colorMax - colorMin;
-
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        Color3 c;
-        c.r = (rand() % colorDelta) + colorMin;
-        c.g = (rand() % colorDelta) + colorMin;
-        c.b = (rand() % colorDelta) + colorMin;
-        app.birdColor[i] = c;
-    }
-
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        app.birdPos[i].x = rand() % WINDOW_WIDTH;
-        app.birdPos[i].y = rand() % WINDOW_HEIGHT;
-    }
-
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        app.birdBodyTf[i].size.x = BIRD_BODY_WIDTH;
-        app.birdBodyTf[i].size.y = BIRD_BODY_HEIGHT;
-        app.birdBodyTf[i].center.x = BIRD_BODY_WIDTH * 0.5f;
-        app.birdBodyTf[i].center.y = BIRD_BODY_HEIGHT * 0.5f;
-    }
-
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        app.birdLeftWingTf[i].size.x = -BIRD_WING_WIDTH;
-        app.birdLeftWingTf[i].size.y = BIRD_WING_HEIGHT;
-        app.birdLeftWingTf[i].center.x = 0;
-        app.birdLeftWingTf[i].center.y = BIRD_WING_HEIGHT * 0.6f;
-    }
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        app.birdRightWingTf[i].size.x = BIRD_WING_WIDTH;
-        app.birdRightWingTf[i].size.y = BIRD_WING_HEIGHT;
-        app.birdRightWingTf[i].center.x = 0;
-        app.birdRightWingTf[i].center.y = BIRD_WING_HEIGHT * 0.6f;
-    }
-
-    memset(app.birdVel, 0, sizeof(app.birdVel));
-    memset(app.birdRot, 0, sizeof(app.birdRot));
-    memset(app.birdAngularVel, 0, sizeof(app.birdAngularVel));
-    memset(app.birdFlapLeftAnimTime, 0, sizeof(app.birdFlapLeftAnimTime));
-    memset(app.birdFlapRightAnimTime, 0, sizeof(app.birdFlapRightAnimTime));
-
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        app.birdRot[i] = (rand() % 10000) / 10000.f * TAU;
-        app.birdAngularVel[i] = -TAU + (rand() % 10000) / 10000.f * TAU * 2.f;
-    }
-
-    app.appleTf.pos.x = WINDOW_WIDTH * 0.5f;
-    app.appleTf.pos.y = WINDOW_HEIGHT * 0.5f;
-    app.appleTf.size.x = 30;
-    app.appleTf.size.y = 30;
-    app.appleTf.center.x = 15;
-    app.appleTf.center.y = 15;
-    app.appleTf.rot = 0;
-    memset(&app.appleColor, 255, sizeof(app.appleColor));
+    resetBirds();
 
     return TRUE;
 }
@@ -194,11 +212,13 @@ void handleEvent(const SDL_Event* event)
             app.birdAngularVel[0] = 0;
             app.birdPos[0].x = WINDOW_WIDTH * 0.5;
             app.birdPos[0].y = WINDOW_HEIGHT * 0.5;
+
+            resetBirds();
         }
     }
 }
 
-void update(f64 delta)
+void updateBirdInput(f64 delta)
 {
     // random input
     static f64 acc = 0.0f;
@@ -212,6 +232,13 @@ void update(f64 delta)
     }
     else {
         for(i32 i = 0; i < BIRD_COUNT; ++i) {
+            app.birdInput[i].left = 0;
+            app.birdInput[i].right = 0;
+        }
+    }
+
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        if(app.birdHealth[i] <= 0.0f) {
             app.birdInput[i].left = 0;
             app.birdInput[i].right = 0;
         }
@@ -236,6 +263,22 @@ void update(f64 delta)
         }
         if(app.birdInput[i].right) {
             app.birdFlapRightAnimTime[i] = WING_ANIM_TIME;
+        }
+    }
+}
+
+void updateBirdCore(f64 delta)
+{
+    // wing anim time
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        if(app.birdHealth[i] <= 0.0f) continue;
+        app.birdFlapLeftAnimTime[i] -= delta;
+        app.birdFlapRightAnimTime[i] -= delta;
+        if(app.birdFlapLeftAnimTime[i] <= 0.0f) {
+            app.birdFlapLeftAnimTime[i] = 0.0f;
+        }
+        if(app.birdFlapRightAnimTime[i] <= 0.0f) {
+            app.birdFlapRightAnimTime[i] = 0.0f;
         }
     }
 
@@ -272,18 +315,6 @@ void update(f64 delta)
         }
     }
 
-    // wing animation
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        app.birdFlapLeftAnimTime[i] -= delta;
-        app.birdFlapRightAnimTime[i] -= delta;
-        if(app.birdFlapLeftAnimTime[i] <= 0.0f) {
-            app.birdFlapLeftAnimTime[i] = 0.0f;
-        }
-        if(app.birdFlapRightAnimTime[i] <= 0.0f) {
-            app.birdFlapRightAnimTime[i] = 0.0f;
-        }
-    }
-
     // update bird body transform
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         app.birdBodyTf[i].pos.x = app.birdPos[i].x;
@@ -308,11 +339,31 @@ void update(f64 delta)
             (wingUpAngle + wingDownAngle) * (app.birdFlapRightAnimTime[i] / WING_ANIM_TIME);
     }
 
-    // reset input
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        app.birdInput[0].left = 0;
-        app.birdInput[0].right = 0;
+        Vec2 applePos = app.applePosList[app.birdApplePositionId[i]];
+        if(vec2Distance(&applePos, &app.birdPos[i]) < 20.f) {
+            app.birdApplePositionId[i]++;
+            app.birdHealth[i] += 5.f; // seconds
+        }
     }
+
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        app.appleTf[i].pos = app.applePosList[app.birdApplePositionId[i]];
+    }
+}
+
+void update(f64 delta)
+{
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        app.birdHealth[i] -= delta;
+        if(app.birdHealth[i] <= 0.0f) {
+            const Color3 black = {0, 0, 0};
+            app.birdColor[i] = black;
+        }
+    }
+
+    updateBirdInput(delta);
+    updateBirdCore(delta);
 
     glClear(GL_COLOR_BUFFER_BIT);
 
@@ -320,7 +371,7 @@ void update(f64 delta)
     drawSpriteBatch(app.tex_birdWing, app.birdRightWingTf, app.birdColor, BIRD_COUNT);
     drawSpriteBatch(app.tex_birdBody, app.birdBodyTf, app.birdColor, BIRD_COUNT);
 
-    drawSpriteBatch(app.tex_apple, &app.appleTf, &app.appleColor, 1);
+    drawSpriteBatch(app.tex_apple, app.appleTf, app.birdColor, BIRD_COUNT);
 
     /*Transform pr;
     pr.pos.x = app.birdPos[0].x + cosf(app.birdRot[0] -PI * 0.5f +PI * 0.15f) * 40.f;
