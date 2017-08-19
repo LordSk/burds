@@ -165,7 +165,7 @@ i32 initSpriteState(i32 winWidth, i32 winHeight)
         LAYOUT_COLOR,
         3,
         GL_UNSIGNED_BYTE,
-        GL_FALSE,
+        GL_TRUE,
         sizeof(u8)*3,
         (void*)0
     );
