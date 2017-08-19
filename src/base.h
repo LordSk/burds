@@ -14,3 +14,6 @@ typedef double f64;
 
 #define TRUE 1
 #define FALSE 0
+
+#define PI (3.14159265359)
+#define TAU (6.28318530718)

@@ -19,6 +19,8 @@
 #define BIRD_WING_WIDTH 50
 #define BIRD_WING_HEIGHT (1.f / BIRD_WING_RATIO * BIRD_WING_WIDTH)
 
+#define WING_ANIM_TIME 0.5f
+
 struct App
 {
     i32 running;
@@ -107,19 +109,29 @@ i32 init()
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         app.birdBodyTf[i].scale.x = BIRD_BODY_WIDTH;
         app.birdBodyTf[i].scale.y = BIRD_BODY_HEIGHT;
+        app.birdBodyTf[i].center.x = BIRD_BODY_WIDTH * 0.5f;
+        app.birdBodyTf[i].center.y = BIRD_BODY_HEIGHT * 0.5f;
     }
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         app.birdLeftWingTf[i].scale.x = -BIRD_WING_WIDTH;
         app.birdLeftWingTf[i].scale.y = BIRD_WING_HEIGHT;
+        app.birdLeftWingTf[i].center.x = 0;
+        app.birdLeftWingTf[i].center.y = BIRD_WING_HEIGHT * 0.6f;
     }
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         app.birdRightWingTf[i].scale.x = BIRD_WING_WIDTH;
         app.birdRightWingTf[i].scale.y = BIRD_WING_HEIGHT;
+        app.birdRightWingTf[i].center.x = 0;
+        app.birdRightWingTf[i].center.y = BIRD_WING_HEIGHT * 0.6f;
     }
 
     memset(app.birdVel, 0, sizeof(app.birdVel));
     memset(app.birdRot, 0, sizeof(app.birdRot));
+
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        app.birdRot[i] = (rand() % 10000) / 10000.f * TAU;
+    }
 
     return TRUE;
 }
@@ -161,20 +173,42 @@ void update(f64 delta)
         }
     }
 
+    // check for ground collision
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        if(rand() % 5000 == 0) {
+            app.birdFlapAnimTime[i] = WING_ANIM_TIME;
+        }
+    }
+
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        app.birdFlapAnimTime[i] -= delta;
+        if(app.birdFlapAnimTime[i] <= 0.0f) {
+            app.birdFlapAnimTime[i] = 0.0f;
+        }
+    }
+
     // update bird body transform
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        app.birdBodyTf[i].pos.x = app.birdPos[i].x - BIRD_BODY_WIDTH * 0.5f;
-        app.birdBodyTf[i].pos.y = app.birdPos[i].y - BIRD_BODY_HEIGHT * 0.5f;
+        app.birdBodyTf[i].pos.x = app.birdPos[i].x;
+        app.birdBodyTf[i].pos.y = app.birdPos[i].y;
+        app.birdBodyTf[i].rot = app.birdRot[i];
     }
+
+    const f32 wingUpAngle = -PI * 0.1f;
+    const f32 wingDownAngle = PI * 0.4f;
 
     // update bird wing transform
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         app.birdLeftWingTf[i].pos.x = app.birdPos[i].x;
-        app.birdLeftWingTf[i].pos.y = app.birdPos[i].y - BIRD_BODY_HEIGHT * 0.4f;
+        app.birdLeftWingTf[i].pos.y = app.birdPos[i].y;
+        app.birdLeftWingTf[i].rot = app.birdRot[i] +
+            (wingUpAngle + wingDownAngle) * (app.birdFlapAnimTime[i] / WING_ANIM_TIME);
     }
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         app.birdRightWingTf[i].pos.x = app.birdPos[i].x;
-        app.birdRightWingTf[i].pos.y = app.birdPos[i].y - BIRD_BODY_HEIGHT * 0.4f;
+        app.birdRightWingTf[i].pos.y = app.birdPos[i].y;
+        app.birdRightWingTf[i].rot = app.birdRot[i] -
+            (wingUpAngle + wingDownAngle) * (app.birdFlapAnimTime[i] / WING_ANIM_TIME);;
     }
 
     glClear(GL_COLOR_BUFFER_BIT);

@@ -11,6 +11,7 @@ typedef struct
 {
     Vec2 pos;
     Vec2 scale;
+    Vec2 center;
     f32 rot;
 } Transform;
 

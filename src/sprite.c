@@ -2,6 +2,7 @@
 #include "stb_image.h"
 #include <stdlib.h>
 #include <gl3w.h>
+#include <math.h>
 
 typedef struct
 {
@@ -38,7 +39,7 @@ inline Mat4 Mat4_mul(const Mat4* m1, const Mat4* m2)
     return m;
 }
 
-inline Mat4 Mat4_translate(const Vec2* v2)
+inline Mat4 mat4Translate(const Vec2* v2)
 {
     Mat4 m;
     memset(&m, 0, sizeof(m));
@@ -52,12 +53,25 @@ inline Mat4 Mat4_translate(const Vec2* v2)
     return m;
 }
 
-inline Mat4 Mat4_scale(const Vec2* v2)
+inline Mat4 mat4Scale(const Vec2* v2)
 {
     Mat4 m;
     memset(&m, 0, sizeof(m));
     m.md[0] = v2->x;
     m.md[5] = v2->y;
+    m.md[10] = 1.f;
+    m.md[15] = 1.f;
+    return m;
+}
+
+inline Mat4 mat4Rotate(f32 angle)
+{
+    Mat4 m;
+    memset(&m, 0, sizeof(m));
+    m.md[0] = cosf(angle);
+    m.md[1] = -sinf(angle);
+    m.md[4] = sinf(angle);
+    m.md[5] = cosf(angle);
     m.md[10] = 1.f;
     m.md[15] = 1.f;
     return m;
@@ -326,9 +340,14 @@ i32 loadTexture(const char* path)
 void drawSpriteBatch(i32 textureId, const Transform* transform, const Color3* color, const i32 count)
 {
     for(i32 i = 0; i < count; ++i) {
-        Mat4 tr = Mat4_translate(&transform[i].pos);
-        Mat4 sc = Mat4_scale(&transform[i].scale);
-        state.tfMats[i] = Mat4_mul(&tr, &sc);
+        Mat4 tr = mat4Translate(&transform[i].pos);
+        Vec2 center = {-transform[i].center.x, -transform[i].center.y};
+        Mat4 cent = mat4Translate(&center);
+        Mat4 rot = mat4Rotate(transform[i].rot);
+        Mat4 sc = mat4Scale(&transform[i].scale);
+        Mat4 trrot = Mat4_mul(&tr, &rot);
+        trrot = Mat4_mul(&trrot, &cent);
+        state.tfMats[i] = Mat4_mul(&trrot, &sc);
     }
 
     glBindBuffer(GL_ARRAY_BUFFER, state.vboModelMats);
