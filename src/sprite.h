@@ -10,7 +10,7 @@ typedef union
 typedef struct
 {
     Vec2 pos;
-    Vec2 scale;
+    Vec2 size;
     Vec2 center;
     f32 rot;
 } Transform;

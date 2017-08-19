@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   xmlns:dc="http://purl.org/dc/elements/1.1/"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   width="512"
+   height="512"
+   viewBox="0 0 135.46666 135.46667"
+   version="1.1"
+   id="svg8"
+   inkscape:export-filename="C:\Prog\Projects\burds\apple.png"
+   inkscape:export-xdpi="30"
+   inkscape:export-ydpi="30"
+   inkscape:version="0.92.1 r15371"
+   sodipodi:docname="apple.svg">
+  <defs
+     id="defs2" />
+  <sodipodi:namedview
+     id="base"
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1.0"
+     inkscape:pageopacity="0.0"
+     inkscape:pageshadow="2"
+     inkscape:zoom="0.98994949"
+     inkscape:cx="193.12386"
+     inkscape:cy="341.32868"
+     inkscape:document-units="mm"
+     inkscape:current-layer="layer1"
+     showgrid="false"
+     units="px"
+     inkscape:window-width="1920"
+     inkscape:window-height="1017"
+     inkscape:window-x="-8"
+     inkscape:window-y="-8"
+     inkscape:window-maximized="1" />
+  <metadata
+     id="metadata5">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:format>image/svg+xml</dc:format>
+        <dc:type
+           rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+        <dc:title></dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <g
+     inkscape:label="Calque 1"
+     inkscape:groupmode="layer"
+     id="layer1"
+     transform="translate(0,-161.53332)">
+    <path
+       style="fill:#f4da0c;fill-opacity:1;stroke:none;stroke-width:0.41273054px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+       d="m 60.345112,293.75766 c 0,0 -21.815758,-1.17922 -29.480754,-6.19096 C 23.199361,282.55499 5.6761555,258.06441 6.3953311,235.97537 7.4271547,204.28358 24.663598,189.00084 40.298201,189.6906 c 10.023454,0.44221 22.70019,1.47403 25.353453,1.17923 2.653248,-0.29481 9.433828,-0.29481 19.752089,-1.47404 8.402029,-0.73704 12.087122,-0.58962 20.636527,3.53768 8.84424,6.92797 19.75212,22.99499 15.33001,50.1173 -4.42212,27.1223 -21.815773,48.05363 -30.659995,49.52767 -8.844222,1.47403 -30.365173,1.17922 -30.365173,1.17922 z"
+       id="path4487"
+       inkscape:connector-curvature="0"
+       sodipodi:nodetypes="ccsscccssc" />
+    <path
+       style="fill:#c29609;fill-opacity:1;stroke:none;stroke-width:0.33533457px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+       d="m 51.050306,192.19193 c 0.456418,0.0551 9.584796,-0.32997 14.148985,-0.0551 4.56419,0.27497 9.193584,0.65993 13.692553,0.21998 4.499,-0.43995 8.280746,-1.04489 8.280746,-1.04489 0,0 -13.822963,4.39951 -16.561476,4.6195 -2.738514,0.21998 -2.868924,2.19976 -9.910823,-0.0551 -7.041898,-2.25475 -11.410459,-3.02467 -11.410459,-3.02467 z"
+       id="path4495"
+       inkscape:connector-curvature="0" />
+    <path
+       style="fill:#321702;fill-opacity:1;stroke:none;stroke-width:0.41273054px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+       d="m 60.405653,193.76682 c -0.208453,-1.22469 3.197958,-6.12628 3.700177,-13.21116 0.722838,-10.19709 -5.107294,-14.07107 -5.107294,-14.07107 2.657866,-1.87616 4.012881,-3.49173 11.986492,-3.7523 0,0 2.993218,10.49531 2.709983,18.65721 -0.133842,3.85735 -3.348617,12.45322 -4.818801,13.90208 -1.237568,1.21961 -3.962588,0.61198 -6.542286,-0.43032"
+       id="path4489"
+       inkscape:connector-curvature="0"
+       sodipodi:nodetypes="csccssc" />
+    <ellipse
+       style="fill:#fbf4b3;fill-opacity:1;stroke:none;stroke-width:0.7391516;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"
+       id="path4491"
+       cx="44.876778"
+       cy="230.94812"
+       rx="13.301252"
+       ry="8.0689011"
+       transform="matrix(0.94215916,-0.3351658,0.21990948,0.97552028,0,0)" />
+    <ellipse
+       style="fill:#fbf4b3;fill-opacity:1;stroke:none;stroke-width:0.82546109;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"
+       id="path4493"
+       cx="71.400391"
+       cy="219.83467"
+       rx="2.8006716"
+       ry="2.8743739" />
+  </g>
+</svg>

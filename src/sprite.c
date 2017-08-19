@@ -343,8 +343,8 @@ void drawSpriteBatch(i32 textureId, const Transform* transform, const Color3* co
         Mat4 tr = mat4Translate(&transform[i].pos);
         Vec2 center = {-transform[i].center.x, -transform[i].center.y};
         Mat4 cent = mat4Translate(&center);
-        Mat4 rot = mat4Rotate(transform[i].rot);
-        Mat4 sc = mat4Scale(&transform[i].scale);
+        Mat4 rot = mat4Rotate(-transform[i].rot);
+        Mat4 sc = mat4Scale(&transform[i].size);
         Mat4 trrot = Mat4_mul(&tr, &rot);
         trrot = Mat4_mul(&trrot, &cent);
         state.tfMats[i] = Mat4_mul(&trrot, &sc);
