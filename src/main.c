@@ -5,6 +5,7 @@
 #include <stdlib.h>
 
 #include "sprite.h"
+#include "neural.h"
 
 #define WINDOW_WIDTH 1280
 #define WINDOW_HEIGHT 720
@@ -28,6 +29,16 @@
 #define WING_STRENGTH_ANGULAR (PI * 0.25f)
 
 #define APPLE_POS_LIST_COUNT 1024
+
+const NeuralNetDef NEURAL_NET_DEF = {
+    3,
+    { 5, 10, 2 }
+};
+
+static f64 outMin1 = 1000.0;
+static f64 outMax1 = -1000.0;
+static f64 outMin2 = 1000.0;
+static f64 outMax2 = -1000.0;
 
 typedef struct
 {
@@ -64,6 +75,9 @@ struct App
     Transform appleTf[BIRD_COUNT];
 
     Line targetLine[BIRD_COUNT];
+
+    NeuralNet* birdNN[BIRD_COUNT];
+    u8* birdNNData;
 } app;
 
 void resetBirds()
@@ -81,8 +95,8 @@ void resetBirds()
     }
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        app.birdPos[i].x = rand() % WINDOW_WIDTH;
-        app.birdPos[i].y = rand() % WINDOW_HEIGHT;
+        app.birdPos[i].x = WINDOW_WIDTH * 0.5f;
+        app.birdPos[i].y = WINDOW_HEIGHT;
     }
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
@@ -116,10 +130,10 @@ void resetBirds()
     memset(app.birdFlapRightAnimTime, 0, sizeof(app.birdFlapRightAnimTime));
     memset(app.birdApplePositionId, 0, sizeof(app.birdApplePositionId));
 
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+    /*for(i32 i = 0; i < BIRD_COUNT; ++i) {
         app.birdRot[i] = (rand() % 10000) / 10000.f * TAU;
         app.birdAngularVel[i] = -TAU + (rand() % 10000) / 10000.f * TAU * 2.f;
-    }
+    }*/
 
     for(i32 i = 0; i < APPLE_POS_LIST_COUNT; ++i) {
         app.applePosList[i].x = rand() % WINDOW_WIDTH;
@@ -137,6 +151,13 @@ void resetBirds()
         app.targetLine[i].c1 = app.birdColor[i];
         app.targetLine[i].c2 = app.birdColor[i];
     }
+
+    initNeuralNets(app.birdNN, BIRD_COUNT, &NEURAL_NET_DEF);
+
+    outMin1 = 1000.0;
+    outMax1 = -1000.0;
+    outMin2 = 1000.0;
+    outMax2 = -1000.0;
 }
 
 i32 init()
@@ -189,6 +210,8 @@ i32 init()
         return FALSE;
     }
 
+    app.birdNNData = allocNeuralNets(app.birdNN, BIRD_COUNT, &NEURAL_NET_DEF);
+
     resetBirds();
 
     return TRUE;
@@ -227,9 +250,69 @@ void handleEvent(const SDL_Event* event)
 
 void updateBirdInput(f64 delta)
 {
-    // random input
+    // setup neural net inputs
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        Vec2 applePos = app.applePosList[app.birdApplePositionId[i]];
+        f64 appleOffsetX = applePos.x - app.birdPos[i].x;
+        f64 appleOffsetY = applePos.y - app.birdPos[i].y;
+        f64 velX = app.birdVel[i].x;
+        f64 velY = app.birdVel[i].y;
+        f64 rot = app.birdRot[i];
+
+#if 0
+        app.birdNN[i]->neurons[0].value = appleOffsetX;
+        app.birdNN[i]->neurons[1].value = appleOffsetY;
+        app.birdNN[i]->neurons[2].value = velX;
+        app.birdNN[i]->neurons[3].value = velY;
+        app.birdNN[i]->neurons[4].value = rot;
+#else // "normalized"
+        app.birdNN[i]->neurons[0].value = appleOffsetX / 1000.0;
+        app.birdNN[i]->neurons[1].value = appleOffsetY / 1000.0;
+        app.birdNN[i]->neurons[2].value = velX / 1000.0;
+        app.birdNN[i]->neurons[3].value = velY / 1000.0;
+        app.birdNN[i]->neurons[4].value = rot / TAU;
+#endif
+    }
+
+    propagateNeuralNets(app.birdNN, BIRD_COUNT, &NEURAL_NET_DEF);
+
     static f64 acc = 0.0f;
     acc += delta;
+
+    // get neural net output
+    // TODO: store this somewhere and use it in neural.c
+    i32 neuronCount = 0;
+    for(i32 l = 0; l < NEURAL_NET_DEF.layerCount; ++l) {
+        neuronCount += NEURAL_NET_DEF.layerNeuronCount[l];
+    }
+
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        f64 out1 = app.birdNN[i]->neurons[neuronCount-2].value;
+        f64 out2 = app.birdNN[i]->neurons[neuronCount-1].value;
+        outMin1 = min(out1, outMin1);
+        outMin2 = min(out2, outMin2);
+        outMax1 = max(out1, outMax1);
+        outMax2 = max(out2, outMax2);
+    }
+
+    if(acc > 0.25) {
+        for(i32 i = 0; i < BIRD_COUNT; ++i) {
+            app.birdInput[i].left = app.birdNN[i]->neurons[neuronCount-2].value > 0.5;
+            app.birdInput[i].right = app.birdNN[i]->neurons[neuronCount-1].value > 0.5;
+        }
+        LOG("out1[min=%.3f, max=%.3f] out2[min=%.3f max=%.3f]",
+            outMin1, outMax1, outMin2, outMax2);
+        acc = 0.0;
+    }
+    else {
+        for(i32 i = 0; i < BIRD_COUNT; ++i) {
+            app.birdInput[i].left = 0;
+            app.birdInput[i].right = 0;
+        }
+    }
+
+#if 0
+    // random input
     if(acc > 1.0) {
         for(i32 i = 0; i < BIRD_COUNT; ++i) {
             app.birdInput[i].left = rand()%2;
@@ -243,6 +326,7 @@ void updateBirdInput(f64 delta)
             app.birdInput[i].right = 0;
         }
     }
+#endif
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         if(app.birdHealth[i] <= 0.0f) {
@@ -402,6 +486,11 @@ void update(f64 delta)
     drawSpriteBatch(app.tex_apple, &pr, &red, 1);*/
 }
 
+void cleanup()
+{
+    free(app.birdNNData);
+}
+
 i32 main()
 {
     LOG("Burds");
@@ -432,6 +521,8 @@ i32 main()
 
         SDL_GL_SwapWindow(app.window);
     }
+
+    cleanup();
 
     SDL_Quit();
     return 0;
