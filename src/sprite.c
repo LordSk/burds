@@ -15,7 +15,7 @@ typedef struct
     f32 md[16];
 } Mat4;
 
-inline Mat4 Mat4_mul(const Mat4* m1, const Mat4* m2)
+inline Mat4 mat4Mul(const Mat4* m1, const Mat4* m2)
 {
     Mat4 m;
     f32* md = m.md;
@@ -395,33 +395,6 @@ i32 initSpriteState(i32 winWidth, i32 winHeight)
         return FALSE;
     }
 
-    i32 left = 0;
-    i32 right = winWidth;
-    i32 top = 0;
-    i32 bottom = winHeight;
-    f32 nearPlane = -10.f;
-    f32 farPlane = 10.f;
-
-    Mat4 ortho;
-    memset(&ortho, 0, sizeof(ortho));
-    ortho.md[0] = 1.f;
-    ortho.md[5] = 1.f;
-    ortho.md[10] = 1.f;
-    ortho.md[15] = 1.f;
-
-    ortho.md[0] = 2.f / (right - left);
-    ortho.md[5] = 2.f / (top - bottom);
-    ortho.md[10] = -2.f / (farPlane - nearPlane);
-    ortho.md[12] = -((right + left) / (right - left));
-    ortho.md[13] = -((top + bottom) / (top - bottom));
-    ortho.md[14] = -((farPlane + nearPlane) / (farPlane - nearPlane));
-
-    glUseProgram(state.programSprite);
-    glUniformMatrix4fv(state.uViewMatrix, 1, GL_FALSE, ortho.md);
-
-    glUseProgram(state.shaderLine.program);
-    glUniformMatrix4fv(state.shaderLine.uViewMatrix, 1, GL_FALSE, ortho.md);
-
     // culling
     //glEnable(GL_CULL_FACE);
     glDisable(GL_CULL_FACE);
@@ -434,6 +407,37 @@ i32 initSpriteState(i32 winWidth, i32 winHeight)
     glViewport(0, 0, winWidth, winHeight);
 
     return TRUE;
+}
+
+void setView(i32 x, i32 y, i32 width, i32 height)
+{
+    i32 left = 0;
+    i32 right = width;
+    i32 top = 0;
+    i32 bottom = height;
+    f32 nearPlane = -10.f;
+    f32 farPlane = 10.f;
+
+    Mat4 ortho;
+    memset(&ortho, 0, sizeof(ortho));
+    ortho.md[15] = 1.f;
+
+    ortho.md[0] = 2.f / (right - left);
+    ortho.md[5] = 2.f / (top - bottom);
+    ortho.md[10] = -2.f / (farPlane - nearPlane);
+    ortho.md[12] = -((right + left) / (right - left));
+    ortho.md[13] = -((top + bottom) / (top - bottom));
+    ortho.md[14] = -((farPlane + nearPlane) / (farPlane - nearPlane));
+
+    Vec2 v = {-x, -y};
+    Mat4 tr = mat4Translate(&v);
+    Mat4 view = mat4Mul(&ortho, &tr);
+
+    glUseProgram(state.programSprite);
+    glUniformMatrix4fv(state.uViewMatrix, 1, GL_FALSE, view.md);
+
+    glUseProgram(state.shaderLine.program);
+    glUniformMatrix4fv(state.shaderLine.uViewMatrix, 1, GL_FALSE, view.md);
 }
 
 i32 loadTexture(const char* path)
@@ -477,9 +481,9 @@ void drawSpriteBatch(i32 textureId, const Transform* transform, const Color3* co
         Mat4 cent = mat4Translate(&center);
         Mat4 rot = mat4Rotate(-transform[i].rot);
         Mat4 sc = mat4Scale(&transform[i].size);
-        Mat4 trrot = Mat4_mul(&tr, &rot);
-        trrot = Mat4_mul(&trrot, &cent);
-        state.tfMats[i] = Mat4_mul(&trrot, &sc);
+        Mat4 trrot = mat4Mul(&tr, &rot);
+        trrot = mat4Mul(&trrot, &cent);
+        state.tfMats[i] = mat4Mul(&trrot, &sc);
     }
 
     glBindBuffer(GL_ARRAY_BUFFER, state.vboModelMats);

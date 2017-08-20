@@ -30,10 +30,9 @@
 
 #define APPLE_POS_LIST_COUNT 1024
 
-const NeuralNetDef NEURAL_NET_DEF = {
-    3,
-    { 5, 10, 2 }
-};
+#define GROUND_Y 3000
+
+const NeuralNetDef NEURAL_NET_DEF = { 3, { 5, 10, 2 } };
 
 static f64 outMin1 = 1000.0;
 static f64 outMax1 = -1000.0;
@@ -78,6 +77,14 @@ struct App
 
     NeuralNet* birdNN[BIRD_COUNT];
     u8* birdNNData;
+
+    i32 birdAppleEatenCount[BIRD_COUNT];
+    f32 birdShortestDistToNextApple[BIRD_COUNT];
+
+    f32 viewZoom;
+    i32 viewX;
+    i32 viewY;
+    u8 mouseRightButDown;
 } app;
 
 void resetBirds()
@@ -95,8 +102,8 @@ void resetBirds()
     }
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        app.birdPos[i].x = WINDOW_WIDTH * 0.5f;
-        app.birdPos[i].y = WINDOW_HEIGHT;
+        app.birdPos[i].x = 0;
+        app.birdPos[i].y = 0;
     }
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
@@ -130,14 +137,22 @@ void resetBirds()
     memset(app.birdFlapRightAnimTime, 0, sizeof(app.birdFlapRightAnimTime));
     memset(app.birdApplePositionId, 0, sizeof(app.birdApplePositionId));
 
-    /*for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        app.birdRot[i] = (rand() % 10000) / 10000.f * TAU;
-        app.birdAngularVel[i] = -TAU + (rand() % 10000) / 10000.f * TAU * 2.f;
-    }*/
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        app.birdRot[i] = PI;
+    }
+
+    i32 spawnOriginX = 0;
+    i32 spawnOriginY = -500;
+    const i32 spawnRadius = 1000;
 
     for(i32 i = 0; i < APPLE_POS_LIST_COUNT; ++i) {
-        app.applePosList[i].x = rand() % WINDOW_WIDTH;
-        app.applePosList[i].y = rand() % WINDOW_HEIGHT;
+        app.applePosList[i].x = spawnOriginX - spawnRadius + (rand() % spawnRadius) * 2;
+        app.applePosList[i].y = spawnOriginY - spawnRadius + (rand() % spawnRadius) * 2;
+        if(app.applePosList[i].y >= GROUND_Y) {
+            app.applePosList[i].y = spawnOriginY - spawnRadius;
+        }
+        spawnOriginX = app.applePosList[i].x;
+        spawnOriginY = app.applePosList[i].y;
     }
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
@@ -200,6 +215,10 @@ i32 init()
         return FALSE;
     }
 
+    app.viewX = -2000;
+    app.viewY = -1000;
+    app.viewZoom = 3.f;
+
     glClearColor(179.f/255.f, 204.f/255.f, 255.f/255.f, 1.0f);
 
     app.tex_birdBody = loadTexture("../bird_body.png");
@@ -246,6 +265,34 @@ void handleEvent(const SDL_Event* event)
             resetBirds();
         }
     }
+
+    if(event->type == SDL_MOUSEBUTTONDOWN) {
+        if(event->button.button == SDL_BUTTON_RIGHT) {
+            app.mouseRightButDown = TRUE;
+        }
+    }
+
+    if(event->type == SDL_MOUSEBUTTONUP) {
+        if(event->button.button == SDL_BUTTON_RIGHT) {
+            app.mouseRightButDown = FALSE;
+        }
+    }
+
+    if(event->type == SDL_MOUSEMOTION) {
+        if(app.mouseRightButDown) {
+            app.viewX -= event->motion.xrel * app.viewZoom;
+            app.viewY -= event->motion.yrel * app.viewZoom;
+        }
+    }
+
+    if(event->type == SDL_MOUSEWHEEL) {
+        if(event->wheel.y > 0) {
+            app.viewZoom *= 0.90f * event->wheel.y;
+        }
+        else if(event->wheel.y < 0) {
+            app.viewZoom *= 1.10f * -event->wheel.y;
+        }
+    }
 }
 
 void updateBirdInput(f64 delta)
@@ -270,7 +317,7 @@ void updateBirdInput(f64 delta)
         app.birdNN[i]->neurons[1].value = appleOffsetY / 1000.0;
         app.birdNN[i]->neurons[2].value = velX / 1000.0;
         app.birdNN[i]->neurons[3].value = velY / 1000.0;
-        app.birdNN[i]->neurons[4].value = rot / TAU;
+        app.birdNN[i]->neurons[4].value = (rot-PI*0.25f) / TAU;
 #endif
     }
 
@@ -398,8 +445,8 @@ void updateBirdCore(f64 delta)
 
     // check for ground collision
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        if(app.birdPos[i].y > WINDOW_HEIGHT) {
-            app.birdPos[i].y = WINDOW_HEIGHT;
+        if(app.birdPos[i].y > GROUND_Y) {
+            app.birdPos[i].y = GROUND_Y;
             app.birdVel[i].x = 0;
             app.birdVel[i].y = 0;
             //app.birdAngularVel[i] = 0;
@@ -450,8 +497,21 @@ void updateBirdCore(f64 delta)
     }
 }
 
+void updateCamera(f64 delta)
+{
+    if(app.mouseRightButDown) {
+        SDL_SetRelativeMouseMode(TRUE);
+    }
+    else {
+        SDL_SetRelativeMouseMode(FALSE);
+    }
+    setView(app.viewX, app.viewY, WINDOW_WIDTH*app.viewZoom, WINDOW_HEIGHT*app.viewZoom);
+}
+
 void update(f64 delta)
 {
+    updateCamera(delta);
+
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         app.birdHealth[i] -= delta;
         if(app.birdHealth[i] <= 0.0f) {
