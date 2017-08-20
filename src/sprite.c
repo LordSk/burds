@@ -304,7 +304,7 @@ i32 initLineShader()
         2,
         GL_FLOAT,
         GL_FALSE,
-        sizeof(Vec2)+sizeof(Color3)+1,
+        sizeof(Vec2)+sizeof(Color4),
         (void*)0
     );
     glEnableVertexAttribArray(LAYOUT_POSITION);
@@ -312,10 +312,10 @@ i32 initLineShader()
     // line color
     glVertexAttribPointer(
         LAYOUT_COLOR,
-        3,
+        4,
         GL_UNSIGNED_BYTE,
         GL_TRUE,
-        sizeof(Vec2)+sizeof(Color3)+1,
+        sizeof(Vec2)+sizeof(Color4),
         (void*)(sizeof(Vec2))
     );
     glEnableVertexAttribArray(LAYOUT_COLOR);
@@ -323,10 +323,10 @@ i32 initLineShader()
     const char* vertexShaderStr = MAKE_STR(
           #version 330 core\n
           layout(location = 0) in vec2 position;\n
-          layout(location = 2) in vec3 color;\n
+          layout(location = 2) in vec4 color;\n
           uniform mat4 uViewMatrix;\n
 
-          out vec3 vert_color;
+          out vec4 vert_color;
 
           void main()\n
           {\n
@@ -338,12 +338,12 @@ i32 initLineShader()
     const char* fragmentShaderStr = MAKE_STR(
         #version 330 core\n
 
-        in vec3 vert_color;\n
+        in vec4 vert_color;\n
         out vec4 fragmentColor;\n
 
         void main()\n
         {\n
-            fragmentColor = vec4(vert_color, 1.0);\n
+            fragmentColor = vert_color;\n
         }
     );
 

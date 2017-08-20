@@ -3,12 +3,13 @@
 #include <SDL2/SDL.h>
 #include <gl3w.h>
 #include <stdlib.h>
+#include <float.h>
 
 #include "sprite.h"
 #include "neural.h"
 
-#define WINDOW_WIDTH 1280
-#define WINDOW_HEIGHT 720
+#define WINDOW_WIDTH 1600
+#define WINDOW_HEIGHT 900
 
 #define BIRD_COUNT 128
 
@@ -80,6 +81,8 @@ struct App
 
     i32 birdAppleEatenCount[BIRD_COUNT];
     f32 birdShortestDistToNextApple[BIRD_COUNT];
+    f32 birdFitness[BIRD_COUNT];
+    f64 genFitness;
 
     f32 viewZoom;
     i32 viewX;
@@ -136,9 +139,11 @@ void resetBirds()
     memset(app.birdFlapLeftAnimTime, 0, sizeof(app.birdFlapLeftAnimTime));
     memset(app.birdFlapRightAnimTime, 0, sizeof(app.birdFlapRightAnimTime));
     memset(app.birdApplePositionId, 0, sizeof(app.birdApplePositionId));
+    memset(app.birdAppleEatenCount, 0, sizeof(app.birdAppleEatenCount));
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         app.birdRot[i] = PI;
+        app.birdShortestDistToNextApple[i] = 5000.f;
     }
 
     i32 spawnOriginX = 0;
@@ -163,8 +168,10 @@ void resetBirds()
     }
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        app.targetLine[i].c1 = app.birdColor[i];
-        app.targetLine[i].c2 = app.birdColor[i];
+        memmove(&app.targetLine[i].c1, &app.birdColor[i], 3);
+        app.targetLine[i].c1.a = 128;
+        memmove(&app.targetLine[i].c2, &app.birdColor[i], 3);
+        app.targetLine[i].c2.a = 0;
     }
 
     initNeuralNets(app.birdNN, BIRD_COUNT, &NEURAL_NET_DEF);
@@ -173,6 +180,8 @@ void resetBirds()
     outMax1 = -1000.0;
     outMin2 = 1000.0;
     outMax2 = -1000.0;
+
+    app.genFitness = 0.0;
 }
 
 i32 init()
@@ -347,8 +356,8 @@ void updateBirdInput(f64 delta)
             app.birdInput[i].left = app.birdNN[i]->neurons[neuronCount-2].value > 0.5;
             app.birdInput[i].right = app.birdNN[i]->neurons[neuronCount-1].value > 0.5;
         }
-        LOG("out1[min=%.3f, max=%.3f] out2[min=%.3f max=%.3f]",
-            outMin1, outMax1, outMin2, outMax2);
+        /*LOG("out1[min=%.3f, max=%.3f] out2[min=%.3f max=%.3f]",
+            outMin1, outMax1, outMin2, outMax2);*/
         acc = 0.0;
     }
     else {
@@ -405,7 +414,7 @@ void updateBirdInput(f64 delta)
     }
 }
 
-void updateBirdCore(f64 delta)
+void updateBirdPhysics(f64 delta)
 {
     // wing anim time
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
@@ -477,12 +486,22 @@ void updateBirdCore(f64 delta)
             (wingUpAngle + wingDownAngle) * (app.birdFlapRightAnimTime[i] / WING_ANIM_TIME);
     }
 
+    // check if we touched the apple
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        Vec2 applePos = app.applePosList[app.birdApplePositionId[i]];
-        if(vec2Distance(&applePos, &app.birdPos[i]) < 20.f) {
+        Vec2* applePos = &app.applePosList[app.birdApplePositionId[i]];
+        if(vec2Distance(applePos, &app.birdPos[i]) < 20.f) {
             app.birdApplePositionId[i]++;
+            app.birdAppleEatenCount[i]++;
             app.birdHealth[i] += 5.f; // seconds
+            app.birdShortestDistToNextApple[i] = vec2Distance(&app.applePosList[app.birdApplePositionId[i]],
+                    &app.birdPos[i]);
         }
+    }
+
+    // update shortest distance to next apple
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        app.birdShortestDistToNextApple[i] = min(app.birdShortestDistToNextApple[i],
+            vec2Distance(&app.applePosList[app.birdApplePositionId[i]], &app.birdPos[i]));
     }
 
     // update apples position
@@ -512,16 +531,39 @@ void update(f64 delta)
 {
     updateCamera(delta);
 
+    // check if dead
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        if(app.birdHealth[i] <= 0.0f) continue;
+
         app.birdHealth[i] -= delta;
-        if(app.birdHealth[i] <= 0.0f) {
+        if(app.birdHealth[i] <= 0.0f) { // death
             const Color3 black = {0, 0, 0};
             app.birdColor[i] = black;
+            const Color4 c1 = {0, 0, 0, 50};
+            const Color4 c2 = {0, 0, 0, 0};
+            app.targetLine[i].c1 = c1;
+            app.targetLine[i].c2 = c2;
+
+            app.birdFitness[i] = app.birdAppleEatenCount[i] * 5000.f +
+                                 (5000.f - app.birdShortestDistToNextApple[i]);
+            app.genFitness += app.birdFitness[i];
         }
     }
 
     updateBirdInput(delta);
-    updateBirdCore(delta);
+    updateBirdPhysics(delta);
+
+    i32 aliveCount = 0;
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        if(app.birdHealth[i] > 0.f) {
+            aliveCount++;
+        }
+    }
+
+    if(aliveCount == 0) {
+        LOG("generation total fitness: %.5f", app.genFitness);
+        resetBirds();
+    }
 
     glClear(GL_COLOR_BUFFER_BIT);
 

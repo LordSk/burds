@@ -24,10 +24,15 @@ typedef struct
 
 typedef struct
 {
+    u8 r,g,b,a;
+} Color4;
+
+typedef struct
+{
     Vec2 p1;
-    Color3 c1;
+    Color4 c1;
     Vec2 p2;
-    Color3 c2;
+    Color4 c2;
 } Line;
 
 i32 initSpriteState(i32 winWidth, i32 winHeight);
