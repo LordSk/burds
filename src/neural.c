@@ -3,6 +3,14 @@
 #include <string.h>
 #include <math.h>
 
+const u64 RAND_MAX48 = ((u64)RAND_MAX << 32) + ((u64)RAND_MAX << 16) + RAND_MAX;
+
+inline f64 randf64(f64 min, f64 max)
+{
+    u64 r = ((u64)rand() << 32) + ((u64)rand() << 16) + (u64)rand();
+    return min + (f64)r/RAND_MAX48 * (max - min);
+}
+
 u8* allocNeuralNets(NeuralNet** nn, const i32 nnCount, const NeuralNetDef* def)
 {
     i32 nnNeuronsSize = 0;
@@ -39,8 +47,7 @@ void initNeuralNets(NeuralNet** nn, const i32 nnCount, const NeuralNetDef* def)
 
             for(i32 n = 0; n < def->layerNeuronCount[l]; ++n) {
                 for(i32 s = 0; s < prevLayerNeuronCount; ++s) {
-                    nn[i]->neurons[curLayerNeuronIdOff + n].synapseWeight[s] =
-                            -1.0 + (f64)rand()/RAND_MAX * 2.0;
+                    nn[i]->neurons[curLayerNeuronIdOff + n].synapseWeight[s] = randf64(-10.0, 10.0);
                 }
             }
         }

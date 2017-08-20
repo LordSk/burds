@@ -21,12 +21,12 @@
 #define BIRD_WING_WIDTH 50
 #define BIRD_WING_HEIGHT (1.f / BIRD_WING_RATIO * BIRD_WING_WIDTH)
 
-#define WING_ANIM_TIME 0.5f
+#define WING_ANIM_TIME 0.1f
 
-#define FRICTION_AIR_ANGULAR 0.06f
-#define FRICTION_AIR 0.02f
+#define FRICTION_AIR_ANGULAR 0.1f
+#define FRICTION_AIR 0.03f
 
-#define WING_STRENGTH 200.f
+#define WING_STRENGTH 150.f
 #define WING_STRENGTH_ANGULAR (PI * 0.25f)
 
 #define APPLE_POS_LIST_COUNT 1024
@@ -44,6 +44,11 @@ typedef struct
 {
     u8 left, right;
 } BirdInput;
+
+enum {
+    MODE_NN_TRAIN=0,
+    MODE_HUMAN_PLAY
+};
 
 struct App
 {
@@ -88,6 +93,8 @@ struct App
     i32 viewX;
     i32 viewY;
     u8 mouseRightButDown;
+
+    i32 mode;
 } app;
 
 void resetBirds()
@@ -242,6 +249,8 @@ i32 init()
 
     resetBirds();
 
+    app.mode = MODE_NN_TRAIN;
+
     return TRUE;
 }
 
@@ -264,14 +273,16 @@ void handleEvent(const SDL_Event* event)
         }
 
         if(event->key.keysym.sym == SDLK_r) {
-            app.birdVel[0].x = 0;
-            app.birdVel[0].y = 0;
-            app.birdRot[0] = 0;
-            app.birdAngularVel[0] = 0;
-            app.birdPos[0].x = WINDOW_WIDTH * 0.5;
-            app.birdPos[0].y = WINDOW_HEIGHT * 0.5;
+           resetBirds();
+        }
+    }
 
-            resetBirds();
+    if(event->type == SDL_KEYUP) {
+        if(event->key.keysym.sym == SDLK_q) {
+            app.birdInput[0].left = 0;
+        }
+        if(event->key.keysym.sym == SDLK_d) {
+            app.birdInput[0].right = 0;
         }
     }
 
@@ -304,7 +315,7 @@ void handleEvent(const SDL_Event* event)
     }
 }
 
-void updateBirdInput(f64 delta)
+void updateBirdInputNN(f64 delta)
 {
     // setup neural net inputs
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
@@ -332,9 +343,6 @@ void updateBirdInput(f64 delta)
 
     propagateNeuralNets(app.birdNN, BIRD_COUNT, &NEURAL_NET_DEF);
 
-    static f64 acc = 0.0f;
-    acc += delta;
-
     // get neural net output
     // TODO: store this somewhere and use it in neural.c
     i32 neuronCount = 0;
@@ -351,38 +359,11 @@ void updateBirdInput(f64 delta)
         outMax2 = max(out2, outMax2);
     }
 
-    if(acc > 0.25) {
-        for(i32 i = 0; i < BIRD_COUNT; ++i) {
-            app.birdInput[i].left = app.birdNN[i]->neurons[neuronCount-2].value > 0.5;
-            app.birdInput[i].right = app.birdNN[i]->neurons[neuronCount-1].value > 0.5;
-        }
-        /*LOG("out1[min=%.3f, max=%.3f] out2[min=%.3f max=%.3f]",
-            outMin1, outMax1, outMin2, outMax2);*/
-        acc = 0.0;
-    }
-    else {
-        for(i32 i = 0; i < BIRD_COUNT; ++i) {
-            app.birdInput[i].left = 0;
-            app.birdInput[i].right = 0;
-        }
-    }
 
-#if 0
-    // random input
-    if(acc > 1.0) {
-        for(i32 i = 0; i < BIRD_COUNT; ++i) {
-            app.birdInput[i].left = rand()%2;
-            app.birdInput[i].right = rand()%2;
-        }
-        acc = 0.0;
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        app.birdInput[i].left = app.birdNN[i]->neurons[neuronCount-2].value > 0.5;
+        app.birdInput[i].right = app.birdNN[i]->neurons[neuronCount-1].value > 0.5;
     }
-    else {
-        for(i32 i = 0; i < BIRD_COUNT; ++i) {
-            app.birdInput[i].left = 0;
-            app.birdInput[i].right = 0;
-        }
-    }
-#endif
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         if(app.birdHealth[i] <= 0.0f) {
@@ -390,32 +371,36 @@ void updateBirdInput(f64 delta)
             app.birdInput[i].right = 0;
         }
     }
-
-    // apply bird input
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        Vec2 leftForce = {
-            app.birdInput[i].left * cosf(app.birdRot[i] -PI * 0.5f +PI * 0.15f) * WING_STRENGTH,
-            app.birdInput[i].left * sinf(app.birdRot[i] -PI * 0.5f +PI * 0.15f) * WING_STRENGTH,
-        };
-        Vec2 rightForce = {
-            app.birdInput[i].right * cosf(app.birdRot[i] -PI * 0.5f -PI * 0.15f) * WING_STRENGTH,
-            app.birdInput[i].right * sinf(app.birdRot[i] -PI * 0.5f -PI * 0.15f) * WING_STRENGTH,
-        };
-        app.birdVel[i].x += leftForce.x + rightForce.x;
-        app.birdVel[i].y += leftForce.y + rightForce.y;
-        app.birdAngularVel[i] += app.birdInput[i].left * WING_STRENGTH_ANGULAR +
-                                 app.birdInput[i].right * -WING_STRENGTH_ANGULAR;
-        if(app.birdInput[i].left) {
-            app.birdFlapLeftAnimTime[i] = WING_ANIM_TIME;
-        }
-        if(app.birdInput[i].right) {
-            app.birdFlapRightAnimTime[i] = WING_ANIM_TIME;
-        }
-    }
 }
 
 void updateBirdPhysics(f64 delta)
 {
+    // apply bird input
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        u8 flapLeft = (app.birdFlapLeftAnimTime[i] <= 0.0f) && app.birdInput[i].left;
+        u8 flapRight = (app.birdFlapRightAnimTime[i] <= 0.0f) && app.birdInput[i].right;
+
+        Vec2 leftForce = {
+            flapLeft * cosf(app.birdRot[i] -PI * 0.5f +PI * 0.15f) * WING_STRENGTH,
+            flapLeft * sinf(app.birdRot[i] -PI * 0.5f +PI * 0.15f) * WING_STRENGTH,
+        };
+        Vec2 rightForce = {
+            flapRight * cosf(app.birdRot[i] -PI * 0.5f -PI * 0.15f) * WING_STRENGTH,
+            flapRight * sinf(app.birdRot[i] -PI * 0.5f -PI * 0.15f) * WING_STRENGTH,
+        };
+        app.birdVel[i].x += leftForce.x + rightForce.x;
+        app.birdVel[i].y += leftForce.y + rightForce.y;
+        app.birdAngularVel[i] += flapLeft * WING_STRENGTH_ANGULAR +
+                                 flapRight * -WING_STRENGTH_ANGULAR;
+
+        if(flapLeft) {
+            app.birdFlapLeftAnimTime[i] = WING_ANIM_TIME;
+        }
+        if(flapRight) {
+            app.birdFlapRightAnimTime[i] = WING_ANIM_TIME;
+        }
+    }
+
     // wing anim time
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         if(app.birdHealth[i] <= 0.0f) continue;
@@ -550,8 +535,16 @@ void update(f64 delta)
         }
     }
 
-    updateBirdInput(delta);
+    if(app.mode == MODE_NN_TRAIN) {
+        updateBirdInputNN(delta);
+    }
+
     updateBirdPhysics(delta);
+
+    if(app.mode == MODE_HUMAN_PLAY) {
+        app.birdInput[0].left = 0;
+        app.birdInput[0].right = 0;
+    }
 
     i32 aliveCount = 0;
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
