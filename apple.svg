@@ -28,9 +28,9 @@
      borderopacity="1.0"
      inkscape:pageopacity="0.0"
      inkscape:pageshadow="2"
-     inkscape:zoom="1.979899"
-     inkscape:cx="283.68012"
-     inkscape:cy="236.92637"
+     inkscape:zoom="1.4"
+     inkscape:cx="135.44064"
+     inkscape:cy="259.92098"
      inkscape:document-units="mm"
      inkscape:current-layer="layer1"
      showgrid="false"
@@ -58,7 +58,7 @@
      id="layer1"
      transform="translate(0,-161.53332)">
     <path
-       style="fill:#a0a0a0;fill-opacity:1;stroke:none;stroke-width:0.41273054px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+       style="fill:#c8c8c8;fill-opacity:1;stroke:none;stroke-width:0.41273054px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
        d="m 60.345112,293.75766 c 0,0 -21.815758,-1.17922 -29.480754,-6.19096 C 23.199361,282.55499 5.6761555,258.06441 6.3953311,235.97537 7.4271547,204.28358 24.663598,189.00084 40.298201,189.6906 c 10.023454,0.44221 22.70019,1.47403 25.353453,1.17923 2.653248,-0.29481 9.433828,-0.29481 19.752089,-1.47404 8.402029,-0.73704 12.087122,-0.58962 20.636527,3.53768 8.84424,6.92797 19.75212,22.99499 15.33001,50.1173 -4.42212,27.1223 -21.815773,48.05363 -30.659995,49.52767 -8.844222,1.47403 -30.365173,1.17922 -30.365173,1.17922 z"
        id="path4487"
        inkscape:connector-curvature="0"
@@ -75,7 +75,7 @@
        inkscape:connector-curvature="0"
        sodipodi:nodetypes="csccssc" />
     <ellipse
-       style="fill:#e1e1e1;fill-opacity:1;stroke:none;stroke-width:0.7391516;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"
+       style="fill:#ffffff;fill-opacity:1;stroke:none;stroke-width:0.7391516;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"
        id="path4491"
        cx="44.876778"
        cy="230.94812"
@@ -83,7 +83,7 @@
        ry="8.0689011"
        transform="matrix(0.94215916,-0.3351658,0.21990948,0.97552028,0,0)" />
     <ellipse
-       style="fill:#d7d7d7;fill-opacity:1;stroke:none;stroke-width:0.82546109;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"
+       style="fill:#ffffff;fill-opacity:1;stroke:none;stroke-width:0.82546109;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"
        id="path4493"
        cx="71.400391"
        cy="219.83467"

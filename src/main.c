@@ -37,11 +37,11 @@
 
 #define GROUND_Y 1000
 
-#define CROSS_STRAT_RANDOM 0x1
-#define CROSS_STRAT_FAVOR_BEST 0x2
-#define CROSSOVER_STRATEGY CROSS_STRAT_FAVOR_BEST
+#define REINSERT_TRUNCATE 0x1
+#define REINSERT_DUPLICATE 0x2
+#define REINSERT_STRATEGY REINSERT_TRUNCATE
 
-#define NEURAL_NET_LAYERS { 6, 6, 2 }
+#define NEURAL_NET_LAYERS { 6, 8, 2 }
 
 static f64 outMin1 = 1000.0;
 static f64 outMax1 = -1000.0;
@@ -97,8 +97,7 @@ struct App
 
     i32 birdAppleEatenCount[BIRD_COUNT];
     f32 birdShortestDistToNextApple[BIRD_COUNT];
-    f32 birdShortestDistToNextAppleX[BIRD_COUNT];
-    f32 birdShortestDistToNextAppleY[BIRD_COUNT];
+    f32 birdLongestDistToNextApple[BIRD_COUNT];
     f32 birdFitness[BIRD_COUNT];
     f64 genTotalFitness;
 
@@ -145,10 +144,10 @@ inline f64 timeToSeconds(i64 delta)
     return delta / (f64)PERFORMANCE_FREQUENCY;
 }
 
-void resetBirds()
+void resetBirdColors()
 {
     const u32 colorMax = 0xFF;
-    const u32 colorMin = 0x2;
+    const u32 colorMin = 0x0;
     const u32 colorDelta = colorMax - colorMin;
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
@@ -158,6 +157,11 @@ void resetBirds()
         c.b = (rand() % colorDelta) + colorMin;
         app.birdColor[i] = c;
     }
+}
+
+void resetBirds()
+{
+    resetBirdColors();
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         app.birdPos[i].x = 0;
@@ -199,8 +203,7 @@ void resetBirds()
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         //app.birdRot[i] = PI;
         app.birdShortestDistToNextApple[i] = 99999.f;
-        app.birdShortestDistToNextAppleX[i] = 99999.f;
-        app.birdShortestDistToNextAppleY[i] = 99999.f;
+        app.birdLongestDistToNextApple[i] = 0.f;
     }
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
@@ -240,6 +243,15 @@ void resetApplePath()
         spawnOriginX = app.applePosList[i].x;
         spawnOriginY = app.applePosList[i].y;
     }
+}
+
+void resetTraining()
+{
+    resetBirds();
+    resetApplePath();
+
+    initNeuralNets(app.birdNN, BIRD_COUNT, &app.nnDef);
+    app.genNumber = 0;
 }
 
 i32 init()
@@ -310,12 +322,9 @@ i32 init()
     app.birdNNData = allocNeuralNets(app.birdNN, BIRD_COUNT, &app.nnDef);
     app.newGenNNData = allocNeuralNets(app.newGenNN, BIRD_COUNT, &app.nnDef);
 
-    resetBirds();
-    resetApplePath();
-
     app.mode = MODE_NN_TRAIN;
-    initNeuralNets(app.birdNN, BIRD_COUNT, &app.nnDef);
-    app.genNumber = 0;
+
+    resetTraining();
 
     return TRUE;
 }
@@ -345,10 +354,7 @@ void handleEvent(const SDL_Event* event)
         }
 
         if(event->key.keysym.sym == SDLK_n) {
-           resetBirds();
-           resetApplePath();
-           initNeuralNets(app.birdNN, BIRD_COUNT, &app.nnDef);
-           app.genNumber = 0;
+           resetTraining();
         }
     }
 
@@ -565,21 +571,15 @@ void updateBirdPhysics(f64 delta)
             app.birdHealth[i] += 5.f; // seconds
             app.birdShortestDistToNextApple[i] = vec2Distance(&app.applePosList[app.birdApplePositionId[i]],
                     &app.birdPos[i]);
-            app.birdShortestDistToNextAppleX[i] = fabs(app.applePosList[app.birdApplePositionId[i]].x -
-                    app.birdPos[i].x);
-            app.birdShortestDistToNextAppleY[i] = fabs(app.applePosList[app.birdApplePositionId[i]].y -
-                    app.birdPos[i].y);
+            app.birdLongestDistToNextApple[i] = app.birdShortestDistToNextApple[i];
         }
     }
 
-    // update shortest distance to next apple
+    // update shortest/longest distance to next apple
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        app.birdShortestDistToNextApple[i] = min(app.birdShortestDistToNextApple[i],
-            vec2Distance(&app.applePosList[app.birdApplePositionId[i]], &app.birdPos[i]));
-        app.birdShortestDistToNextAppleX[i] = min(app.birdShortestDistToNextAppleX[i],
-            fabs(app.applePosList[app.birdApplePositionId[i]].x - app.birdPos[i].x));
-        app.birdShortestDistToNextAppleY[i] = min(app.birdShortestDistToNextAppleY[i],
-            fabs(app.applePosList[app.birdApplePositionId[i]].y - app.birdPos[i].y));
+        f32 dist = vec2Distance(&app.applePosList[app.birdApplePositionId[i]], &app.birdPos[i]);
+        app.birdShortestDistToNextApple[i] = min(app.birdShortestDistToNextApple[i], dist);
+        app.birdLongestDistToNextApple[i] = max(app.birdShortestDistToNextApple[i], dist);
     }
 
     // update apples position
@@ -684,46 +684,35 @@ void crossover(i32 id, i32 parentA, i32 parentB)
 #endif
 }
 
-void crossoverRandom(f32 percent)
+i32 selectRandom(const i32 reinsertCount)
 {
-    /*
-    f64 lowestFit = 9999999;
-    f64 highestFit = -9999999;
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        lowestFit = min(lowestFit, app.birdFitness[i]);
-        highestFit = max(highestFit, app.birdFitness[i]);
-    }
+    return rand() % reinsertCount;
+}
 
-    f64 median = percent * (lowestFit + highestFit);
+i32 selectTournament(const i32 reinsertCount, const i32 tournamentSize)
+{
+    i32 champion = rand() % reinsertCount;
+    f32 championFitness = app.bestFitness[champion];
 
-    LOG("lowestFit=%.5f highestFit=%.5f median=%.5f", lowestFit, highestFit, median);
-
-    const i32 maxBest = BIRD_COUNT * percent;
-    i32 bestCount = 0;
-    for(i32 i = 0; i < BIRD_COUNT && bestCount < maxBest; ++i) {
-        if(app.birdFitness[i] > median) {
-            memmove(app.birdNNCopy[bestCount++], app.birdNN[i], neuralNetSize);
+    for(i32 i = 0; i < tournamentSize; ++i) {
+        i32 opponent = rand() % reinsertCount;
+        if(app.bestFitness[opponent] > championFitness) {
+            champion = opponent;
+            championFitness = app.bestFitness[opponent];
         }
     }
 
-    LOG("best performing birds copied over: %d", bestCount);
-    return bestCount;*/
+    return champion;
+}
 
-    /*f32 lowestFit = 9999999;
-    f32 highestFit = -9999999;
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        lowestFit = min(lowestFit, app.birdFitness[i]);
-        highestFit = max(highestFit, app.birdFitness[i]);
-    }
-
-    f32 median = 0.5 * (lowestFit + highestFit);*/
-
+i32 reinsertTruncate(f32 percent)
+{
     const i32 maxBest = BIRD_COUNT * percent;
-    i32 bestCount = 0;
+    i32 reinsertCount = 0;
     u8 copied[BIRD_COUNT];
     memset(copied, 0, sizeof(copied));
 
-    while(bestCount < maxBest) {
+    while(reinsertCount < maxBest) {
         i32 highestId = -1;
         f32 highestFit = -9999999;
 
@@ -734,37 +723,28 @@ void crossoverRandom(f32 percent)
             }
         }
 
-        if(highestFit <= 0) {
-            break;
-        }
-
-        app.newGenColor[bestCount] = app.birdColor[highestId];
-        app.bestFitness[bestCount] = highestFit;
+        app.newGenColor[reinsertCount] = app.birdColor[highestId];
+        app.bestFitness[reinsertCount] = highestFit;
         app.bestTotalFitness += highestFit;
-        memmove(app.newGenNN[bestCount], app.birdNN[highestId], app.nnDef.neuralNetSize);
-        bestCount++;
+        memmove(app.newGenNN[reinsertCount], app.birdNN[highestId], app.nnDef.neuralNetSize);
+        reinsertCount++;
         copied[highestId] = TRUE;
     }
 
-    LOG("best birds copied: %d", bestCount);
-
-    for(i32 i = bestCount; i < BIRD_COUNT; ++i) {
-        i32 parentA = rand() % bestCount;
-        i32 parentB = rand() % bestCount;
-        crossover(i, parentA, parentB);
-    }
+    return reinsertCount;
 }
 
-void crossoverFavorBest(f32 percent, f32 startDuplicatePerc)
+// Reinsert best percentile, duplicate best ones (does not exceed percent count)
+i32 reinsertDuplicate(f32 percent, i32 startingDuplicateCount)
 {
     const i32 maxBest = BIRD_COUNT * percent;
-    i32 bestCount = 0;
+    i32 reinsertCount = 0;
     u8 copied[BIRD_COUNT];
     memset(copied, 0, sizeof(copied));
 
-    i32 duplicateCount = BIRD_COUNT * startDuplicatePerc;
+    i32 duplicateCount = startingDuplicateCount;
 
-    while(bestCount < maxBest) {
+    while(reinsertCount < maxBest) {
         i32 highestId = -1;
         f32 highestFit = -9999999;
 
@@ -775,90 +755,67 @@ void crossoverFavorBest(f32 percent, f32 startDuplicatePerc)
             }
         }
 
-        if(highestFit <= 0) {
-            break;
-        }
-
         for(i32 d = 0; d < duplicateCount; ++d) {
-            app.newGenColor[bestCount] = app.birdColor[highestId];
-            app.bestFitness[bestCount] = highestFit;
+            app.newGenColor[reinsertCount] = app.birdColor[highestId];
+            app.bestFitness[reinsertCount] = highestFit;
             app.bestTotalFitness += highestFit;
-            memmove(app.newGenNN[bestCount], app.birdNN[highestId], app.nnDef.neuralNetSize);
-            bestCount++;
+            memmove(app.newGenNN[reinsertCount], app.birdNN[highestId], app.nnDef.neuralNetSize);
+            reinsertCount++;
         }
 
         duplicateCount = max(1, duplicateCount / 2);
         copied[highestId] = TRUE;
     }
 
-    LOG("best birds copied: %d", bestCount);
-
-    duplicateCount = (BIRD_COUNT-bestCount) * startDuplicatePerc;
-    i32 bestParentId = 0;
-    i32 birdChildIdOff = bestCount;
-
-    for(i32 d = 0; d < duplicateCount; ++d) {
-        for(i32 i = birdChildIdOff; i < BIRD_COUNT; ++i) {
-            i32 parentA = bestParentId;
-            i32 parentB = bestParentId+1;
-
-            crossover(i, parentA, parentB);
-        }
-
-        birdChildIdOff += duplicateCount;
-        bestParentId++;
-
-        if(duplicateCount <= 1) {
-            duplicateCount = 0;
-        }
-        else {
-            duplicateCount /= 2;
-        }
-    }
-
-    LOG("children based off top best: %d", birdChildIdOff - bestCount);
-
-    for(i32 i = birdChildIdOff; i < BIRD_COUNT; ++i) {
-        i32 parentA = rand() % bestCount;
-        i32 parentB = rand() % bestCount;
-        crossover(i, parentA, parentB);
-    }
-
-    LOG("children based off random best: %d", BIRD_COUNT - birdChildIdOff);
+    return reinsertCount;
 }
 
 void nextGeneration()
 {
-#if CROSSOVER_STRATEGY == CROSS_STRAT_RANDOM
-    crossoverRandom(0.3f);
-#elif CROSSOVER_STRATEGY == CROSS_STRAT_FAVOR_BEST
-    crossoverFavorBest(0.4f, 0.2f);
+#if REINSERT_STRATEGY == REINSERT_TRUNCATE
+    const i32 reinsertCount = reinsertTruncate(0.4f);
+#elif REINSERT_STRATEGY == REINSERT_DUPLICATE
+    const i32 reinsertCount = reinsertDuplicate(0.4f, BIRD_COUNT * 0.1f);
 #endif
+
+    const i32 tournamentSize = 5;
+    LOG("tournamentSize=%d", tournamentSize);
+
+    for(i32 i = reinsertCount; i < BIRD_COUNT; ++i) {
+        i32 parentA = selectTournament(reinsertCount, tournamentSize);
+        i32 parentB = selectTournament(reinsertCount, tournamentSize);
+        crossover(i, parentA, parentB);
+    }
+
+    const f32 mutationRate = 0.01f;
 
     i32 mutationCount = 0;
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        u8 mutated = FALSE;
         //f64 mutationFactor = (f64)i/BIRD_COUNT;
         //mutationFactor = mutationFactor * mutationFactor * mutationFactor;
 
         i32 curLayerNeuronIdOff = 0;
-        for(i32 l = 1; l < app.nnDef.layerCount; ++l) {
+        for(i32 l = 1; l < app.nnDef.layerCount && !mutated; ++l) {
             const i32 prevLayerNeuronCount = app.nnDef.layerNeuronCount[l-1];
             curLayerNeuronIdOff += prevLayerNeuronCount;
 
-            for(i32 n = 0; n < app.nnDef.layerNeuronCount[l]; ++n) {
-                for(i32 s = 0; s < prevLayerNeuronCount; ++s) {
+            for(i32 n = 0; n < app.nnDef.layerNeuronCount[l] && !mutated; ++n) {
+                for(i32 s = 0; s < prevLayerNeuronCount && !mutated; ++s) {
                     // mutate
-                    if(rand()/(f32)RAND_MAX <= 0.005f) {
+                    if(((f32)rand()/RAND_MAX) < mutationRate) {
                         mutationCount++;
-                        app.newGenNN[i]->neurons[curLayerNeuronIdOff + n].synapseWeight[s] =
-                                randf64(-1.0, 1.0);
+                        f64 nw = app.newGenNN[i]->neurons[curLayerNeuronIdOff + n].synapseWeight[s] +
+                                 randf64(-1.0, 1.0);
+                        app.newGenNN[i]->neurons[curLayerNeuronIdOff + n].synapseWeight[s] = nw;
+                        mutated = TRUE; // mutate once per bird max
                     }
                 }
             }
         }
     }
 
-    LOG("mutationCount=%d", mutationCount);
+    LOG("mutationRate=%.2f mutationCount=%d", mutationRate, mutationCount);
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         memmove(app.birdNN[i], app.newGenNN[i], app.nnDef.neuralNetSize);
@@ -879,7 +836,7 @@ void doUI()
     imguiSameLine();
     if(imguiButton("10.0")) app.timeScale = 10.0f;
     imguiSameLine();
-    if(imguiButton("10.0")) app.timeScale = 20.0f;
+    if(imguiButton("20.0")) app.timeScale = 20.0f;
 
     imguiEnd();
 }
@@ -901,8 +858,14 @@ void update(f64 delta)
             app.targetLine[i].c1 = c1;
             app.targetLine[i].c2 = c2;
 
-            app.birdFitness[i] = app.birdAppleEatenCount[i] * 2 +
-                                 APPLE_RADIUS / app.birdShortestDistToNextApple[i];
+            f32 applesFactor = app.birdAppleEatenCount[i];
+            f32 shortDistFactor = APPLE_RADIUS / app.birdShortestDistToNextApple[i];
+            f32 longDistFactor = max(-2.f, app.birdLongestDistToNextApple[i] / -5000.f);
+
+            app.birdFitness[i] = applesFactor * 10.f +
+                                 shortDistFactor * 3.f +
+                                 longDistFactor * 1.f;
+
             app.genTotalFitness += app.birdFitness[i];
         }
     }
