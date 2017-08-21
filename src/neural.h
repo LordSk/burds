@@ -1,10 +1,12 @@
 #pragma once
 #include "base.h"
 
+#define MAX_SYNAPSE_COUNT 15
+
 typedef struct Neuron
 {
    f64 value;
-   f64 synapseWeight[10];
+   f64 synapseWeight[MAX_SYNAPSE_COUNT];
 } Neuron;
 
 typedef struct NeuralNet

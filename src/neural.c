@@ -47,7 +47,7 @@ void initNeuralNets(NeuralNet** nn, const i32 nnCount, const NeuralNetDef* def)
 
             for(i32 n = 0; n < def->layerNeuronCount[l]; ++n) {
                 for(i32 s = 0; s < prevLayerNeuronCount; ++s) {
-                    nn[i]->neurons[curLayerNeuronIdOff + n].synapseWeight[s] = randf64(-10.0, 10.0);
+                    nn[i]->neurons[curLayerNeuronIdOff + n].synapseWeight[s] = randf64(-1, 1.0);
                 }
             }
         }
@@ -79,7 +79,8 @@ void propagateNeuralNets(NeuralNet** nn, const i32 nnCount, const NeuralNetDef* 
                     value += curNeuron->synapseWeight[s] * nn[i]->neurons[prevLayerNeuronIdOff + s].value;
                 }
                  // "activate" value
-                curNeuron->value = 1.0 / (1.0 + exp(-value)); // sigmoid [0.05-0.995]
+                curNeuron->value = tanh(value);
+                //curNeuron->value = 1.0 / (1.0 + exp(-value)); // sigmoid [0.05-0.995]
                 //curNeuron->value = 1.0 / (1.0 + fabs(value)); // fast sigmoid [0.2-1.0]
             }
 
