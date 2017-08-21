@@ -3,6 +3,7 @@
 #include <time.h>
 
 typedef int32_t i32;
+typedef int64_t i64;
 typedef uint32_t u32;
 typedef uint64_t u64;
 typedef uint8_t u8;
@@ -11,6 +12,7 @@ typedef double f64;
 
 #define LOG(fmt, ...) (printf(fmt "\n", __VA_ARGS__), fflush(stdout))
 #define TIME_MILLI() (clock() / (CLOCKS_PER_SEC / 1000))
+#define TIME_MICRO() (clock() / CLOCKS_PER_SEC)
 #define MAKE_STR(s) #s
 
 #define TRUE 1

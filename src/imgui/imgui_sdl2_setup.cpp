@@ -401,3 +401,13 @@ u8 imguiSliderFloat(const char* label, f32* v, f32 v_min, f32 v_max)
 {
     return ImGui::SliderFloat(label, v, v_min, v_max);
 }
+
+u8 imguiButton(const char* label)
+{
+    return ImGui::Button(label);
+}
+
+void imguiSameLine()
+{
+    ImGui::SameLine();
+}

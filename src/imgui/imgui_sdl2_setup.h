@@ -21,6 +21,8 @@ void imguiTestWindow();
 void imguiBegin(const char* name);
 void imguiEnd();
 u8 imguiSliderFloat(const char* label, f32* v, f32 v_min, f32 v_max);
+u8 imguiButton(const char* label);
+void imguiSameLine();
 
 #ifdef __cplusplus
 }

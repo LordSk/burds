@@ -1,5 +1,6 @@
 #include "neural.h"
 #include <stdlib.h>
+#include <string.h>
 #include <math.h>
 
 const u64 RAND_MAX48 = ((u64)RAND_MAX << 32) + ((u64)RAND_MAX << 16) + RAND_MAX;
@@ -86,4 +87,18 @@ void propagateNeuralNets(NeuralNet** nn, const i32 nnCount, const NeuralNetDef* 
             prevLayerNeuronIdOff += prevLayerNeuronCount;
         }
     }
+}
+
+void makeNeuralNetDef(NeuralNetDef* def, const i32 layerCount, const i32 layerNeuronCount[])
+{
+    def->layerCount = layerCount;
+    memmove(def->layerNeuronCount, layerNeuronCount, sizeof(i32) * layerCount);
+    def->neuronCount = 0;
+    for(i32 l = 0; l < def->layerCount; ++l) {
+        def->neuronCount += def->layerNeuronCount[l];
+    }
+    def->neuralNetSize = sizeof(Neuron) * def->neuronCount;
+    def->inputNeuronCount = def->layerNeuronCount[0];
+    def->synapseTotalCount = (def->neuronCount - def->inputNeuronCount) *
+                                       MAX_SYNAPSE_COUNT;
 }
