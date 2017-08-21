@@ -8,6 +8,7 @@
 
 #include "sprite.h"
 #include "neural.h"
+#include "imgui/imgui_sdl2_setup.h"
 
 #define WINDOW_WIDTH 1600
 #define WINDOW_HEIGHT 900
@@ -35,9 +36,7 @@
 
 #define GROUND_Y 1000
 
-#define TIME_SCALE 20.0
-
-const NeuralNetDef NEURAL_NET_DEF = { 4, { 6, 10, 4, 2 } };
+const NeuralNetDef NEURAL_NET_DEF = { 3, { 6, 4, 2 } };
 
 static f64 outMin1 = 1000.0;
 static f64 outMax1 = -1000.0;
@@ -108,6 +107,10 @@ struct App
 
     i32 mode;
     i32 genNumber;
+
+    struct ImGuiGLSetup* ims;
+
+    f32 timeScale;
 } app;
 
 void resetBirds()
@@ -247,6 +250,11 @@ i32 init()
         return FALSE;
     }
 
+    app.ims = imguiInit(WINDOW_WIDTH, WINDOW_HEIGHT);
+    if(!app.ims) {
+        LOG("ERROR: could not init imgui");
+    }
+
     app.viewX = -2000;
     app.viewY = -1000;
     app.viewZoom = 3.f;
@@ -260,6 +268,8 @@ i32 init()
        app.tex_apple == -1) {
         return FALSE;
     }
+
+    app.timeScale = 1.0f;
 
     app.birdNNData = allocNeuralNets(app.birdNN, BIRD_COUNT, &NEURAL_NET_DEF);
     app.newGenNNData = allocNeuralNets(app.newGenNN, BIRD_COUNT, &NEURAL_NET_DEF);
@@ -276,6 +286,8 @@ i32 init()
 
 void handleEvent(const SDL_Event* event)
 {
+    imguiHandleInput(app.ims, *event);
+
     if(event->type == SDL_QUIT) {
         app.running = FALSE;
     }
@@ -734,9 +746,23 @@ void nextGeneration()
     memmove(app.birdColor, app.newGenColor, sizeof(app.birdColor));
 }
 
+void doUI()
+{
+    imguiTestWindow();
+
+    imguiBegin("Timescale");
+
+    imguiSliderFloat("scale", &app.timeScale, 0.1f, 20.f);
+
+    imguiEnd();
+}
+
 void update(f64 delta)
 {
-    delta = TIME_SCALE * delta;
+    imguiUpdate(app.ims, delta);
+    doUI();
+
+    delta = app.timeScale * delta;
 
     updateCamera(delta);
 
@@ -806,10 +832,13 @@ void update(f64 delta)
     Color3 red = {255, 0, 0};
 
     drawSpriteBatch(app.tex_apple, &pr, &red, 1);*/
+
+    imguiRender();
 }
 
 void cleanup()
 {
+    free(app.ims);
     free(app.birdNNData);
     free(app.newGenNNData);
 }

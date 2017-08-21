@@ -1,13 +1,6 @@
 #pragma once
 #include "base.h"
-
-typedef union
-{
-    struct { f32 data[2]; };
-    struct { f32 x, y; };
-} Vec2;
-
-f32 vec2Distance(Vec2* va, Vec2* vb);
+#include "vec_math.h"
 
 typedef struct
 {

@@ -17,7 +17,7 @@ solution "burds_solution"
 		"x64"
 	}
 	
-	language "C"
+	language "C++"
 	
 	configuration {"Debug"}
 		targetsuffix "_debug"
@@ -82,6 +82,7 @@ project "burds_app"
 	files {
 		"src/**.h",
 		"src/**.c",
+		"src/**.cpp",
 	}
 	
 	includedirs {

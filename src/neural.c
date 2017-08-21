@@ -1,6 +1,5 @@
 #include "neural.h"
 #include <stdlib.h>
-#include <string.h>
 #include <math.h>
 
 const u64 RAND_MAX48 = ((u64)RAND_MAX << 32) + ((u64)RAND_MAX << 16) + RAND_MAX;
