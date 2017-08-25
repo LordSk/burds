@@ -10,10 +10,26 @@ typedef union Vec2
     struct { f32 x, y; };
 } Vec2;
 
+inline Vec2 vec2Make(f32 x, f32 y)
+{
+    Vec2 v = {x, y};
+    return v;
+}
+
 inline f32 vec2Distance(Vec2* va, Vec2* vb)
 {
     return sqrtf((vb->x - va->x) * (vb->x - va->x) +
            (vb->y - va->y) * (vb->y - va->y));
+}
+
+inline f32 vec2Dot(Vec2* va, Vec2* vb)
+{
+    return (va->x * vb->x) + (va->y * vb->y);
+}
+
+inline f32 vec2Len(Vec2* v)
+{
+    return sqrt((v->x * v->x) + (v->y * v->y));
 }
 
 typedef struct Mat4
