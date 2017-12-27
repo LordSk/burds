@@ -1,6 +1,5 @@
 --
-local SDL2_lib_msvc = "C:/Prog/Libraries/SDL2-2.0.4/install_msvc/lib/SDL2.lib"
-local SDL2_include_msvc = "C:/Prog/Libraries/SDL2-2.0.4/install_msvc/include"
+dofile("config.lua");
 
 PROJ_DIR = path.getabsolute("..")
 BUILD_DIR = path.join(PROJ_DIR, "build")
@@ -86,12 +85,12 @@ project "burds_app"
 	}
 	
 	includedirs {
-		SDL2_include_msvc,
+		SDL2_include,
 	}
 	
 	links {
 		"gdi32",
 		"glu32",
 		"opengl32",
-		SDL2_lib_msvc,
+		SDL2_lib,
 	}

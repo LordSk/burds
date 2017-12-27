@@ -15,6 +15,12 @@ typedef struct
     u8 r,g,b;
 } Color3;
 
+inline Color3 color3(u8 r, u8 g, u8 b)
+{
+    Color3 c3 = {r,g,b};
+    return c3;
+}
+
 typedef struct
 {
     u8 r,g,b,a;
