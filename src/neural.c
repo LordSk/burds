@@ -3,13 +3,34 @@
 #include <string.h>
 #include <math.h>
 #include <assert.h>
+#include <float.h>
 
+#define U64_MAX 0xffffffffffffffff
 const u64 RAND_MAX3 = (u64)RAND_MAX*3;
+
+static u64 state = 0xDEADBEEFCDCD;
+
+inline u64 xorshift64star()
+{
+    u64 x = state;	/* The state must be seeded with a nonzero value. */
+    x ^= x >> 12; // a
+    x ^= x << 25; // b
+    x ^= x >> 27; // c
+    state = x;
+    return x * 0x2545F4914F6CDD1D;
+}
+
+inline f64 clampf64(f64 val, f64 vmin, f64 vmax)
+{
+    if(val < vmin) return vmin;
+    if(val > vmax) return vmax;
+    return val;
+}
 
 inline f64 randf64(f64 min, f64 max)
 {
-    u64 r = (u64)rand() + (u64)rand() + (u64)rand();
-    return min + (f64)r/RAND_MAX3 * (max - min);
+    u64 r = xorshift64star();
+    return min + ((f64)r/U64_MAX) * (max - min);
 }
 
 u8* neuralNetAlloc(NeuralNet** nn, const i32 nnCount, const NeuralNetDef* def)

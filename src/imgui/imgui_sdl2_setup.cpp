@@ -294,7 +294,7 @@ void imguiDeinit(ImGuiGLSetup* ims)
     ims = 0;
 }
 
-void imguiUpdate(ImGuiGLSetup* ims, f64 delta)
+void imguiUpdate(ImGuiGLSetup* ims)
 {
     ImGuiIO& io = ImGui::GetIO();
     clock_t now = TIME_MILLI();
@@ -400,6 +400,11 @@ void imguiEnd()
 u8 imguiSliderFloat(const char* label, f32* v, f32 v_min, f32 v_max)
 {
     return ImGui::SliderFloat(label, v, v_min, v_max);
+}
+
+u8 imguiSliderInt(const char* label, i32* v, i32 v_min, i32 v_max)
+{
+    return ImGui::SliderInt(label, v, v_min, v_max);
 }
 
 u8 imguiButton(const char* label)
