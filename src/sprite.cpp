@@ -170,10 +170,12 @@ i32 initSpriteShader()
         in vec3 vert_color;\n
         out vec4 fragmentColor;\n
 
+        #define PI (3.14159265359)\n
+
         void main()\n
         {\n
             vec4 tex = texture(uTexture, vert_uv);
-            fragmentColor = tex * vec4(vert_color, 1.0);\n
+            fragmentColor = vec4(mix(vec3(tex), vert_color, sin(tex.r * PI)), tex.a);\n
         }
     );
 

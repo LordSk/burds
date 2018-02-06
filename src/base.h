@@ -63,5 +63,5 @@ inline f64 randf64(f64 min, f64 max)
 inline f64 randi64(i64 min, i64 max)
 {
     u64 r = xorshift64star();
-    return min + (r/U64_MAX) * (max - min);
+    return min + (r % (max - min + 1));
 }
