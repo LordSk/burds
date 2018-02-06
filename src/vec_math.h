@@ -32,6 +32,12 @@ inline f32 vec2Len(Vec2* v)
     return sqrt((v->x * v->x) + (v->y * v->y));
 }
 
+inline Vec2 vec2Add(const Vec2* v1, const Vec2* v2)
+{
+    Vec2 v = {v1->x + v2->x, v1->y + v2->y};
+    return v;
+}
+
 typedef struct Mat4
 {
     f32 md[16];

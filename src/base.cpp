@@ -26,4 +26,9 @@ i64 timeToMicrosec(i64 delta)
     return (delta * 1000000) / PERFORMANCE_FREQUENCY;
 }
 
+i64 timeGetMicro()
+{
+    return (timeGet() * 1000000) / PERFORMANCE_FREQUENCY;
+}
+
 u64 g_RandSeed= 0xdeadbeefcdcd;

@@ -30,6 +30,7 @@ typedef i64 timept;
 void timeInit();
 timept timeGet();
 i64 timeToMicrosec(i64 delta);
+i64 timeGetMicro();
 
 
 
