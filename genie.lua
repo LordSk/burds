@@ -94,3 +94,31 @@ project "burds_app"
 		"opengl32",
 		SDL2_lib,
 	}
+    
+    
+    
+
+project "frogs_app"
+	kind "WindowedApp"
+
+	configuration {}
+	
+	files {
+		"src/*.h",
+		"src/*.cpp",
+		"src/frogs/*.h",
+		"src/frogs/*.cpp",
+		"src/imgui/*.h",
+		"src/imgui/*.cpp",
+	}
+	
+	includedirs {
+		SDL2_include,
+	}
+	
+	links {
+		"gdi32",
+		"glu32",
+		"opengl32",
+		SDL2_lib,
+	}

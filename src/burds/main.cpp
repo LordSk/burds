@@ -15,7 +15,7 @@
 #define FRAMES_PER_SEC 60.0
 #define FRAME_DT ((f64)(1.0/FRAMES_PER_SEC))
 
-#define BIRD_COUNT 1024
+#define BIRD_COUNT 512
 
 #define BIRD_BODY_RATIO 0.5f
 #define BIRD_WING_RATIO 1.68125f
@@ -30,14 +30,14 @@
 #define FRICTION_AIR_ANGULAR 0.05f
 #define FRICTION_AIR 0.05f
 
-#define WING_STRENGTH 150.f
+#define WING_STRENGTH 160.f
 #define WING_STRENGTH_ANGULAR (PI * 0.4f)
 
 #define ANGULAR_VELOCITY_MAX (TAU * 2.0)
 
 #define APPLE_POS_LIST_COUNT 1024
 #define APPLE_RADIUS 80.0
-#define APPLE_HEALTH_BONUS 4.f
+#define APPLE_HEALTH_BONUS 5.0
 
 #define GROUND_Y 1000
 
@@ -45,7 +45,9 @@
 #define REINSERT_DUPLICATE 0x2
 #define REINSERT_STRATEGY REINSERT_TRUNCATE
 
-#define NEURAL_NET_LAYERS { 6, 8, 2 }
+#define INPUT_STACK_SIZE 20
+
+#define NEURAL_NET_LAYERS { 6, INPUT_STACK_SIZE*3, INPUT_STACK_SIZE*2 }
 
 static f64 outMin1 = 1000.0;
 static f64 outMax1 = -1000.0;
@@ -112,6 +114,7 @@ struct App
 
     f64 birdFitness[BIRD_COUNT];
     f64 birdLivingFitness[BIRD_COUNT];
+    BirdInput birdInputStack[BIRD_COUNT][INPUT_STACK_SIZE];
     f64 genTotalFitness;
 
     Bounds genFitness;
@@ -131,6 +134,7 @@ struct App
     struct ImGuiGLSetup* ims;
 
     i32 timeScale;
+    i32 inputStackTop;
 } app;
 
 typedef i64 timept;
@@ -251,6 +255,8 @@ void resetBirds()
     app.genShortDistFactor = minb;
     app.genLongDistFactor = minb;
     app.genHealthFactor = minb;
+
+    app.inputStackTop = 0;
 }
 
 void resetApplePath()
@@ -342,7 +348,7 @@ i32 init()
 
 
     const i32 layers[] = NEURAL_NET_LAYERS;
-    makeNeuralNetDef(&app.nnDef, sizeof(layers) / sizeof(i32), layers, 1.f);
+    makeNeuralNetDef(&app.nnDef, sizeof(layers) / sizeof(layers[0]), layers, 1.f);
 
     app.birdNNData = neuralNetAlloc(app.curGenNN, BIRD_COUNT, &app.nnDef);
     app.newGenNNData = neuralNetAlloc(app.newGenNN, BIRD_COUNT, &app.nnDef);
@@ -423,62 +429,65 @@ void handleEvent(const SDL_Event* event)
 
 void updateBirdInputNN()
 {
-    // setup neural net inputs
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        Vec2 applePos = app.applePosList[app.birdApplePositionId[i]];
-        f64 appleOffsetX = applePos.x - app.birdPos[i].x;
-        f64 appleOffsetY = applePos.y - app.birdPos[i].y;
-        f64 velX = app.birdVel[i].x;
-        f64 velY = app.birdVel[i].y;
-        f64 rot = app.birdRot[i];
-        f64 angVel = app.birdAngularVel[i];
+    i32 inputStackCur = app.inputStackTop--;
+    if(app.inputStackTop < 0) {
+        app.inputStackTop = INPUT_STACK_SIZE-1;
+        inputStackCur = app.inputStackTop;
 
-        app.curGenNN[i]->values[0] = appleOffsetX / 10000.0;
-        app.curGenNN[i]->values[1] = appleOffsetY / 10000.0;
-        app.curGenNN[i]->values[2] = velX / 1000.0;
-        app.curGenNN[i]->values[3] = velY / 1000.0;
-        app.curGenNN[i]->values[4] = (rot -PI * 0.25f) / TAU;
-        // 5 rotations per second is propably high enough
-        app.curGenNN[i]->values[5] = angVel / (TAU * 5.0);
-        //app.birdNN[i]->values[6] = app.birdFlapLeftCd[i] / WING_FLAP_TIME;
-        //app.birdNN[i]->values[7] = app.birdFlapRightCd[i] / WING_FLAP_TIME;
+        // setup neural net inputs
+        for(i32 i = 0; i < BIRD_COUNT; ++i) {
+            Vec2 applePos = app.applePosList[app.birdApplePositionId[i]];
+            f64 appleOffsetX = applePos.x - app.birdPos[i].x;
+            f64 appleOffsetY = applePos.y - app.birdPos[i].y;
+            f64 velX = app.birdVel[i].x;
+            f64 velY = app.birdVel[i].y;
+            f64 rot = app.birdRot[i];
+            f64 angVel = app.birdAngularVel[i];
 
-        /*f32 leftEyeDir = rot -PI * 0.25f -PI * 0.15f;
-        f32 rightEyeDir = rot -PI * 0.25f +PI * 0.15f;
-        const f32 eyeDist = 40.f;
-        Vec2 leftEye = { app.birdPos[i].x + cosf(leftEyeDir) * eyeDist,
-                         app.birdPos[i].y + sinf(leftEyeDir) * eyeDist};
-        Vec2 rightEye = { app.birdPos[i].x + cosf(rightEyeDir) * eyeDist,
-                          app.birdPos[i].y + sinf(rightEyeDir) * eyeDist};
-        app.birdNN[i]->neurons[0].value = vec2Distance(&leftEye, &app.birdPos[i]) / 5000.0;
-        app.birdNN[i]->neurons[1].value = vec2Distance(&rightEye, &app.birdPos[i]) / 5000.0;
-        app.birdNN[i]->neurons[2].value = velX / 1000.0;
-        app.birdNN[i]->neurons[3].value = velY / 1000.0;
-        app.birdNN[i]->neurons[4].value = angVel / 1000.0;*/
+            app.curGenNN[i]->values[0] = appleOffsetX / 10000.0;
+            app.curGenNN[i]->values[1] = appleOffsetY / 10000.0;
+            app.curGenNN[i]->values[2] = velX / 1000.0;
+            app.curGenNN[i]->values[3] = velY / 1000.0;
+            app.curGenNN[i]->values[4] = (rot -PI * 0.25f) / TAU;
+            // 5 rotations per second is propably high enough
+            app.curGenNN[i]->values[5] = angVel / (TAU * 5.0);
+            //app.birdNN[i]->values[6] = app.birdFlapLeftCd[i] / WING_FLAP_TIME;
+            //app.birdNN[i]->values[7] = app.birdFlapRightCd[i] / WING_FLAP_TIME;
+
+            /*f32 leftEyeDir = rot -PI * 0.25f -PI * 0.15f;
+            f32 rightEyeDir = rot -PI * 0.25f +PI * 0.15f;
+            const f32 eyeDist = 40.f;
+            Vec2 leftEye = { app.birdPos[i].x + cosf(leftEyeDir) * eyeDist,
+                             app.birdPos[i].y + sinf(leftEyeDir) * eyeDist};
+            Vec2 rightEye = { app.birdPos[i].x + cosf(rightEyeDir) * eyeDist,
+                              app.birdPos[i].y + sinf(rightEyeDir) * eyeDist};
+            app.birdNN[i]->neurons[0].value = vec2Distance(&leftEye, &app.birdPos[i]) / 5000.0;
+            app.birdNN[i]->neurons[1].value = vec2Distance(&rightEye, &app.birdPos[i]) / 5000.0;
+            app.birdNN[i]->neurons[2].value = velX / 1000.0;
+            app.birdNN[i]->neurons[3].value = velY / 1000.0;
+            app.birdNN[i]->neurons[4].value = angVel / 1000.0;*/
+        }
+
+        neuralNetPropagate(app.curGenNN, BIRD_COUNT, &app.nnDef);
+
+        // get neural net output
+        for(i32 i = 0; i < BIRD_COUNT; ++i) {
+            f64* output = &app.curGenNN[i]->values[app.nnDef.neuronCount-(INPUT_STACK_SIZE*2)];
+            for(i32 s = 0; s < INPUT_STACK_SIZE; ++s) {
+                app.birdInputStack[i][s].left = output[s*2] > 0.8;
+                app.birdInputStack[i][s].right = output[s*2+1] > 0.8;
+            }
+        }
     }
 
-    neuralNetPropagate(app.curGenNN, BIRD_COUNT, &app.nnDef);
-
-    // get neural net output
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        f64 out1 = app.curGenNN[i]->values[app.nnDef.neuronCount-2];
-        f64 out2 = app.curGenNN[i]->values[app.nnDef.neuronCount-1];
-        outMin1 = min(out1, outMin1);
-        outMin2 = min(out2, outMin2);
-        outMax1 = max(out1, outMax1);
-        outMax2 = max(out2, outMax2);
-    }
-
-
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        app.birdInput[i].left = app.curGenNN[i]->values[app.nnDef.neuronCount-2] > 0.5;
-        app.birdInput[i].right = app.curGenNN[i]->values[app.nnDef.neuronCount-1] > 0.5;
-    }
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         if(app.birdHealth[i] <= 0.0f) {
             app.birdInput[i].left = 0;
             app.birdInput[i].right = 0;
+        }
+        else {
+            app.birdInput[i] = app.birdInputStack[i][inputStackCur];
         }
     }
 }
@@ -504,6 +513,7 @@ void updateBirdPhysics()
         if(flapLeft && flapRight) {
             totalForce.x *= 1.5f;
             totalForce.y *= 1.5f;
+            app.birdAngularVel[i] *= 0.5;
         }
 
         // easier to rectify speed
@@ -621,7 +631,7 @@ void updateBirdPhysics()
         if(app.birdHealth[i] > 0.0f && vec2Distance(applePos, &app.birdPos[i]) < APPLE_RADIUS) {
             app.birdApplePositionId[i]++;
             app.birdAppleEatenCount[i]++;
-            app.birdHealth[i] += 5.f; // seconds
+            app.birdHealth[i] += APPLE_HEALTH_BONUS;
             app.birdShortestDistToNextApple[i] = vec2Distance(&app.applePosList[app.birdApplePositionId[i]],
                     &app.birdPos[i]);
             app.birdLongestDistToNextApple[i] = app.birdShortestDistToNextApple[i];
@@ -781,7 +791,7 @@ void nextGeneration()
 
 
 #if REINSERT_STRATEGY == REINSERT_TRUNCATE
-    i32 reinsertCount = reinsertTruncate(BIRD_COUNT*0.2);
+    i32 reinsertCount = reinsertTruncate(BIRD_COUNT*0.1);
 #elif REINSERT_STRATEGY == REINSERT_DUPLICATE
     i32 reinsertCount = reinsertDuplicate(0.3f, 16);
 #endif
@@ -789,16 +799,15 @@ void nextGeneration()
     const i32 tournamentSize = 15;
     LOG("tournamentSize=%d", tournamentSize);
 
-    crossover(reinsertCount++, 0, 1);
-
+    // cross over
     for(i32 i = reinsertCount; i < BIRD_COUNT; ++i) {
         i32 parentA = selectTournament(BIRD_COUNT, tournamentSize, -1);
         i32 parentB = selectTournament(BIRD_COUNT, tournamentSize, parentA);
         crossover(i, parentA, parentB);
     }
 
-    const f32 mutationRate = 0.01f;
-
+    // mutate
+    const f32 mutationRate = 0.005f;
     i32 mutationCount = 0;
     for(i32 i = 1; i < BIRD_COUNT; ++i) {
         //f64 mutationFactor = 0.1 + ((f64)i/BIRD_COUNT) * 0.9;
@@ -814,7 +823,7 @@ void nextGeneration()
         }
     }
 
-    LOG("mutationRate=%.2f mutationCount=%d", mutationRate, mutationCount);
+    LOG("mutationRate=%g mutationCount=%d", mutationRate, mutationCount);
 
     memmove(app.curGenNN[0], app.newGenNN[0], app.nnDef.neuralNetSize * BIRD_COUNT);
 }
@@ -853,7 +862,7 @@ void newFrame()
             f64 applesFactor = app.birdAppleEatenCount[i];
             f64 shortDistFactor = APPLE_RADIUS / app.birdShortestDistToNextApple[i]; // 0.0 -> 1.0
             f64 longDistFactor = app.birdLongestDistToNextApple[i] / 5000.0; // 0.0 -> inf
-            f64 deathDistFactor = APPLE_RADIUS / vec2Distance(&app.birdPos[i],
+            f64 deathDistFactor = APPLE_RADIUS * 1000.0 / vec2Distance(&app.birdPos[i],
                                   &app.appleTf[i].pos); // 0.0 -> 1.0
             f64 healthFactor = app.birdMaxHealthAchieved[i] / APPLE_HEALTH_BONUS - 1.0f;
             f64 avgDistFactor = (app.birdDistToNextAppleSum[i] / app.birdDistCheckCount[i]) /
@@ -867,12 +876,12 @@ void newFrame()
                 deathDistFactor = 0;
             }*/
 
-            /*app.birdFitness[i] = applesFactor * 2.0 +
+            /*app.birdFitness[i] = applesFactor * 4.0 +
                                  shortDistFactor +
                                  deathDistFactor;*/
 
-            app.birdFitness[i] = applesFactor * 2.0 +
-                                 deathDistFactor;
+            app.birdFitness[i] = applesFactor * 2000.0 + deathDistFactor;
+            //app.birdFitness[i] = applesFactor * 2.0 + shortDistFactor;
 
             app.genTotalFitness += app.birdFitness[i];
             app.genFitness.worst = min(app.genFitness.worst, app.birdFitness[i]);
@@ -958,8 +967,8 @@ void render()
 
     glClear(GL_COLOR_BUFFER_BIT);
 
-    const f32 gl = -10000.f;
-    const f32 gr = 10000.f;
+    const f32 gl = -10000000.f;
+    const f32 gr = 10000000.f;
     const f32 gt = GROUND_Y;
     const f32 gb = GROUND_Y + 10000.f;
     const Color4 groundColor = {40, 89, 24, 255};
@@ -994,13 +1003,63 @@ void render()
 void cleanup()
 {
     free(app.ims);
-    free(app.birdNNData);
-    free(app.newGenNNData);
+    _aligned_free(app.birdNNData);
+    _aligned_free(app.newGenNNData);
+}
+
+void testPropagate()
+{
+    f64 inputs[2] = { randf64(-5.0, 5.0), randf64(-5.0, 5.0) };
+    f64 values[3] = {0, 0, 0};
+    f64 bias = 1.0;
+    f64 weights1[3 * 3] = { randf64(-1.0, 1.0), randf64(-1.0, 1.0), randf64(-1.0, 1.0), randf64(-1.0, 1.0),
+                            randf64(-1.0, 1.0), randf64(-1.0, 1.0), randf64(-1.0, 1.0), randf64(-1.0, 1.0)};
+    f64 weights2[4] = { randf64(-1.0, 1.0), randf64(-1.0, 1.0), randf64(-1.0, 1.0), randf64(-1.0, 1.0)};
+
+
+    for(i32 i = 0; i < 3; ++i) {
+        values[i] += inputs[0] * weights1[i*3];
+        values[i] += inputs[1] * weights1[i*3+1];
+        values[i] += bias * weights1[i*3+2];
+        values[i] = 1.0 / (1.0 + exp(-values[i]));
+    }
+
+    f64 output = 0;
+    for(i32 i = 0; i < 3; ++i) {
+        output += values[i] * weights2[i];
+    }
+    output += bias * weights2[3];
+    output = 1.0 / (1.0 + exp(-output));
+
+    NeuralNetDef def;
+    const i32 layers[] = {2, 3, 1};
+    makeNeuralNetDef(&def, sizeof(layers) / sizeof(layers[0]), layers, 1.0);
+
+    NeuralNet* nn;
+    neuralNetAlloc(&nn, 1, &def);
+
+    assert(def.neuronCount == 6);
+    assert(def.synapseTotalCount == (3 * 3 + 4));
+    nn->values[0] = inputs[0];
+    nn->values[1] = inputs[1];
+    memmove(nn->weights, weights1, sizeof(weights1));
+    memmove(nn->weights + 9, weights2, sizeof(weights2));
+
+    neuralNetPropagate(&nn, 1, &def);
+
+    for(i32 i = 0; i < 3; ++i) {
+        assert(nn->values[2 + i] == values[i]);
+    }
+    assert(nn->values[def.neuronCount-1] == output);
+
+    _aligned_free(nn);
 }
 
 i32 main()
 {
     LOG("Burds");
+
+    testPropagate();
 
     srand(time(NULL));
     timeInit();

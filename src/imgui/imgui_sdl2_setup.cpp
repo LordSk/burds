@@ -16,7 +16,7 @@ struct ImGuiGLSetup
     clock_t lastFrameTime;
 };
 
-GLuint glMakeShader(GLenum type, const char* pFileBuff, i32 fileSize)
+static GLuint glMakeShader(GLenum type, const char* pFileBuff, i32 fileSize)
 {
     GLuint shader = glCreateShader(type);
 

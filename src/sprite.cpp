@@ -42,7 +42,7 @@ enum {
     LAYOUT_MODEL = 3,
 };
 
-GLuint glMakeShader(GLenum type, const char* pFileBuff, i32 fileSize)
+static GLuint glMakeShader(GLenum type, const char* pFileBuff, i32 fileSize)
 {
     GLuint shader = glCreateShader(type);
 
@@ -338,7 +338,7 @@ i32 initSpriteState(i32 winWidth, i32 winHeight)
 void setView(i32 x, i32 y, i32 width, i32 height)
 {
     Mat4 ortho = mat4Ortho(0, width, 0, height, -10.f, 10.f);
-    Vec2 v = {-x, -y};
+    Vec2 v = {(f32)-x, (f32)-y};
     Mat4 tr = mat4Translate(&v);
     Mat4 view = mat4Mul(&ortho, &tr);
 
@@ -358,7 +358,7 @@ i32 loadTexture(const char* path)
         return -1;
     }
 
-    i32 texture;
+    u32 texture;
     glGenTextures(1, &texture);
     glBindTexture(GL_TEXTURE_2D, texture);
 
