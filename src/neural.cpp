@@ -33,6 +33,8 @@ void neuralNetInitRandom(NeuralNet** nn, const i32 nnCount, const NeuralNetDef* 
 
 void neuralNetPropagate(NeuralNet** nn, const i32 nnCount, const NeuralNetDef* def)
 {
+    const f64 bias = def->bias;
+
     // there probably is a way better way to traverse the net and compute values
     for(i32 i = 0; i < nnCount; ++i) {
         f64* neuronPrevValues = nn[i]->values;
@@ -50,7 +52,7 @@ void neuralNetPropagate(NeuralNet** nn, const i32 nnCount, const NeuralNetDef* d
                 for(; s < prevLayerNeuronCount; ++s) {
                     value += neuronWeights[s] * neuronPrevValues[s];
                 }
-                value += neuronWeights[s] * def->bias; // bias
+                value += neuronWeights[s] * bias; // bias
                 neuronWeights += prevLayerNeuronCount + 1; // +bias
 
                  // "activate" value
@@ -86,4 +88,96 @@ void makeNeuralNetDef(NeuralNetDef* def, const i32 layerCount, const i32 layerNe
     def->neuralNetSize += sizeof(f64) * def->neuronCount; // neuron values
     def->neuralNetSize += sizeof(f64) * def->synapseTotalCount;
     def->bias = bias;
+}
+
+struct FitnessPair
+{
+    i32 id;
+    f64 fitness;
+};
+
+static i32 compareFitness(const void* a, const void* b)
+{
+    const FitnessPair* fa = (FitnessPair*)a;
+    const FitnessPair* fb = (FitnessPair*)b;
+    if(fa->fitness > fb->fitness) return -1;
+    if(fa->fitness < fb->fitness) return 1;
+    return 0;
+}
+
+i32 reinsertTruncate(i32 maxBest, i32 nnCount, f64* fitness, NeuralNet** nextGen,
+                     NeuralNet** curGen, NeuralNetDef* def)
+{
+    assert(nnCount < 2048);
+    FitnessPair list[2048];
+    for(i32 i = 0; i < nnCount; ++i) {
+        list[i].id = i;
+        list[i].fitness = fitness[i];
+    }
+
+    qsort(list, nnCount, sizeof(FitnessPair), compareFitness);
+
+    for(i32 i = 0; i < maxBest; ++i) {
+        memmove(nextGen[i], curGen[list[i].id], def->neuralNetSize);
+    }
+
+    return maxBest;
+}
+
+
+void crossover(i32 id, i32 parentA, i32 parentB, NeuralNet** nextGen,
+               NeuralNet** curGen, NeuralNetDef* def)
+{
+    for(i32 s = 0; s < def->synapseTotalCount; ++s) {
+        // get weight from parent A
+        if(xorshift64star() & 1) {
+            nextGen[id]->weights[s] = curGen[parentA]->weights[s];
+        }
+        // get weight from parent B
+        else {
+            nextGen[id]->weights[s] = curGen[parentB]->weights[s];
+        }
+    }
+}
+
+inline i32 selectRandom(const i32 reinsertCount, i32 notThisId)
+{
+    i32 r = xorshift64star() % reinsertCount;
+    while(r == notThisId) {
+        r = xorshift64star() % reinsertCount;
+    }
+    return r;
+}
+
+i32 selectTournament(const i32 reinsertCount, const i32 tournamentSize, i32 notThisId, const f64* fitness)
+{
+    i32 champion = selectRandom(reinsertCount, notThisId);
+    f32 championFitness = fitness[champion];
+
+    for(i32 i = 0; i < tournamentSize; ++i) {
+        i32 opponent = selectRandom(reinsertCount, notThisId);
+        if(fitness[opponent] > championFitness) {
+            champion = opponent;
+            championFitness = fitness[opponent];
+        }
+    }
+
+    return champion;
+}
+
+
+i32 mutate(f32 rate, f32 factor, i32 nnCount, NeuralNet** nextGen, NeuralNetDef* def)
+{
+    i32 mutationCount = 0;
+    for(i32 i = 1; i < nnCount; ++i) {
+        for(i32 s = 0; s < def->synapseTotalCount; ++s) {
+            // mutate
+            if(randf64(0.0, 1.0) < rate) {
+                mutationCount++;
+                nextGen[i]->weights[s] += randf64(-factor, factor);
+            }
+        }
+    }
+
+    return mutationCount;
 }

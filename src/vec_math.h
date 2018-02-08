@@ -16,7 +16,7 @@ inline Vec2 vec2Make(f32 x, f32 y)
     return v;
 }
 
-inline f32 vec2Distance(Vec2* va, Vec2* vb)
+inline f32 vec2Distance(const Vec2* va, const Vec2* vb)
 {
     return sqrtf((vb->x - va->x) * (vb->x - va->x) +
            (vb->y - va->y) * (vb->y - va->y));

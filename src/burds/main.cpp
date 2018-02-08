@@ -725,7 +725,7 @@ i32 compareFitness(const void* a, const void* b)
     return 0;
 }
 
-i32 reinsertTruncate(const i32 maxBest)
+i32 reinsertTruncate(i32 maxBest, i32 nnCount, NeuralNet** nextGen, NeuralNet** curGen)
 {
     FitnessPair list[BIRD_COUNT];
     for(i32 i = 0; i < BIRD_COUNT; ++i) {

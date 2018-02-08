@@ -7,6 +7,7 @@ typedef int32_t i32;
 typedef int64_t i64;
 typedef uint32_t u32;
 typedef uint64_t u64;
+typedef int8_t i8;
 typedef uint8_t u8;
 typedef float f32;
 typedef double f64;
@@ -37,6 +38,11 @@ i64 timeGetMicro();
 // RANDOM
 extern u64 g_RandSeed;
 
+inline void randSetSeed(u64 seed)
+{
+    g_RandSeed = seed;
+}
+
 inline u64 xorshift64star()
 {
     u64 x = g_RandSeed;	/* The state must be seeded with a nonzero value. */
@@ -54,6 +60,14 @@ inline f64 clampf64(f64 val, f64 vmin, f64 vmax)
     return val;
 }
 
+template<typename T>
+inline T clamp(T val, T vmin, T vmax)
+{
+    if(val < vmin) return vmin;
+    if(val > vmax) return vmax;
+    return val;
+}
+
 inline f64 randf64(f64 min, f64 max)
 {
     u64 r = xorshift64star();
@@ -61,7 +75,7 @@ inline f64 randf64(f64 min, f64 max)
 }
 
 
-inline f64 randi64(i64 min, i64 max)
+inline i64 randi64(i64 min, i64 max)
 {
     u64 r = xorshift64star();
     return min + (r % (max - min + 1));

@@ -10,10 +10,10 @@ typedef struct
     f32 rot;
 } Transform;
 
-typedef struct
+struct Color3
 {
     u8 r,g,b;
-} Color3;
+};
 
 inline Color3 color3(u8 r, u8 g, u8 b)
 {
