@@ -725,7 +725,7 @@ i32 compareFitness(const void* a, const void* b)
     return 0;
 }
 
-i32 reinsertTruncate(i32 maxBest, i32 nnCount, NeuralNet** nextGen, NeuralNet** curGen)
+i32 reinsertTruncateNN(i32 maxBest, i32 nnCount, NeuralNet** nextGen, NeuralNet** curGen)
 {
     FitnessPair list[BIRD_COUNT];
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
@@ -791,7 +791,7 @@ void nextGeneration()
 
 
 #if REINSERT_STRATEGY == REINSERT_TRUNCATE
-    i32 reinsertCount = reinsertTruncate(BIRD_COUNT*0.1);
+    i32 reinsertCount = reinsertTruncateNN(BIRD_COUNT*0.1);
 #elif REINSERT_STRATEGY == REINSERT_DUPLICATE
     i32 reinsertCount = reinsertDuplicate(0.3f, 16);
 #endif
@@ -1007,59 +1007,11 @@ void cleanup()
     _aligned_free(app.newGenNNData);
 }
 
-void testPropagate()
-{
-    f64 inputs[2] = { randf64(-5.0, 5.0), randf64(-5.0, 5.0) };
-    f64 values[3] = {0, 0, 0};
-    f64 bias = 1.0;
-    f64 weights1[3 * 3] = { randf64(-1.0, 1.0), randf64(-1.0, 1.0), randf64(-1.0, 1.0), randf64(-1.0, 1.0),
-                            randf64(-1.0, 1.0), randf64(-1.0, 1.0), randf64(-1.0, 1.0), randf64(-1.0, 1.0)};
-    f64 weights2[4] = { randf64(-1.0, 1.0), randf64(-1.0, 1.0), randf64(-1.0, 1.0), randf64(-1.0, 1.0)};
-
-
-    for(i32 i = 0; i < 3; ++i) {
-        values[i] += inputs[0] * weights1[i*3];
-        values[i] += inputs[1] * weights1[i*3+1];
-        values[i] += bias * weights1[i*3+2];
-        values[i] = 1.0 / (1.0 + exp(-values[i]));
-    }
-
-    f64 output = 0;
-    for(i32 i = 0; i < 3; ++i) {
-        output += values[i] * weights2[i];
-    }
-    output += bias * weights2[3];
-    output = 1.0 / (1.0 + exp(-output));
-
-    NeuralNetDef def;
-    const i32 layers[] = {2, 3, 1};
-    makeNeuralNetDef(&def, sizeof(layers) / sizeof(layers[0]), layers, 1.0);
-
-    NeuralNet* nn;
-    neuralNetAlloc(&nn, 1, &def);
-
-    assert(def.neuronCount == 6);
-    assert(def.synapseTotalCount == (3 * 3 + 4));
-    nn->values[0] = inputs[0];
-    nn->values[1] = inputs[1];
-    memmove(nn->weights, weights1, sizeof(weights1));
-    memmove(nn->weights + 9, weights2, sizeof(weights2));
-
-    neuralNetPropagate(&nn, 1, &def);
-
-    for(i32 i = 0; i < 3; ++i) {
-        assert(nn->values[2 + i] == values[i]);
-    }
-    assert(nn->values[def.neuronCount-1] == output);
-
-    _aligned_free(nn);
-}
-
 i32 main()
 {
     LOG("Burds");
 
-    testPropagate();
+    testPropagateNN();
 
     srand(time(NULL));
     timeInit();

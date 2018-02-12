@@ -16,6 +16,7 @@ typedef double f64;
 #define TIME_MILLI() (clock() / (CLOCKS_PER_SEC / 1000))
 #define TIME_MICRO() (clock() / CLOCKS_PER_SEC)
 #define MAKE_STR(s) #s
+#define array_count(arr) (sizeof(arr)/sizeof(arr[0]))
 
 #define TRUE 1
 #define FALSE 0
@@ -25,6 +26,14 @@ typedef double f64;
 
 #define U64_MAX 0xffffffffffffffff
 
+#ifndef max
+    #define max(a,b) (((a) > (b)) ? (a) : (b))
+#endif
+
+#ifndef min
+    #define min(a,b) (((a) < (b)) ? (a) : (b))
+#endif
+
 
 // TIME
 typedef i64 timept;
@@ -32,7 +41,6 @@ void timeInit();
 timept timeGet();
 i64 timeToMicrosec(i64 delta);
 i64 timeGetMicro();
-
 
 
 // RANDOM

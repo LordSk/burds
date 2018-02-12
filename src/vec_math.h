@@ -1,6 +1,7 @@
 #pragma once
 #include <math.h>
 #include <string.h>
+#include <assert.h>
 
 typedef float f32;
 
@@ -27,7 +28,12 @@ inline f32 vec2Dot(Vec2* va, Vec2* vb)
     return (va->x * vb->x) + (va->y * vb->y);
 }
 
-inline f32 vec2Len(Vec2* v)
+inline f32 vec2Cross(const Vec2* va, const Vec2* vb)
+{
+    return va->x * vb->y - va->y * vb->x;
+}
+
+inline f32 vec2Len(const Vec2* v)
 {
     return sqrt((v->x * v->x) + (v->y * v->y));
 }
@@ -38,10 +44,45 @@ inline Vec2 vec2Add(const Vec2* v1, const Vec2* v2)
     return v;
 }
 
-typedef struct Mat4
+inline Vec2 vec2Minus(const Vec2* v1, const Vec2* v2)
+{
+    Vec2 v = {v1->x - v2->x, v1->y - v2->y};
+    return v;
+}
+
+inline Vec2 vec2Normalize(const Vec2* v)
+{
+    f32 len = vec2Len(v);
+    if(len == 0.0f) len = 1.0f;
+    return Vec2{v->x / len, v->y / len};
+}
+
+inline f32 vec2Angle(const Vec2* v)
+{
+    Vec2 vx = {1.0f, 0.0f};
+    Vec2 vn = vec2Normalize(v);
+    f32 cross = vec2Cross(&vn, &vx);
+    f32 dot = vec2Dot(&vn, &vx);
+    if(dot > 1.0f) dot = 1.0f;
+    if(dot < -1.0f) dot = -1.0f;
+    return atan2(cross, dot);
+}
+
+inline f32 vec2AngleBetween(const Vec2* va, const Vec2* vb)
+{
+    Vec2 van = vec2Normalize(va);
+    Vec2 vbn = vec2Normalize(vb);
+    f32 cross = vec2Cross(&van, &vbn);
+    f32 dot = vec2Dot(&van, &vbn);
+    if(dot > 1.0f) dot = 1.0f;
+    if(dot < -1.0f) dot = -1.0f;
+    return atan2(cross, dot);
+}
+
+struct Mat4
 {
     f32 md[16];
-} Mat4;
+};
 
 inline Mat4 mat4Mul(const Mat4* m1, const Mat4* m2)
 {

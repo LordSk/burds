@@ -34,7 +34,7 @@ constexpr i32 MAP_WATER_AVG_SIZE = MAP_WATER_AVG_WIDTH*MAP_WATER_AVG_HEIGHT;
 
 #define FROG_COUNT 1024
 #define FROG_SIZE 60.0f
-#define FROG_SPEED 300.0f
+#define FROG_SPEED 400.0f
 #define FROG_ANIM_JUMP 300
 #define FROG_ANIM_TONGUE 200
 #define FROG_JUMP_CD 450
@@ -51,7 +51,7 @@ constexpr i32 MAP_WATER_AVG_SIZE = MAP_WATER_AVG_WIDTH*MAP_WATER_AVG_HEIGHT;
 
 #define STATS_HISTORY_COUNT 30
 
-#define SIMULATION_MAX_TIME 60.0
+#define SIMULATION_MAX_TIME 90.0
 
 //#define VISION_WIDTH 32 // is a square
 
@@ -108,7 +108,7 @@ u32 tex_mapAvgWater;
 
 i32 pondPos[MAP_POND_MAX_COUNT];
 i32 pondRadius[MAP_POND_MAX_COUNT];
-i32 pondCount = 5;
+i32 pondCount = 1;
 
 i32 tex_frog[FROG_TEX_COUNT];
 
@@ -123,6 +123,7 @@ f64 frogTongueTime[FROG_COUNT];
 WaterSensors frogWaterSensors[FROG_COUNT];
 f64 frogClosestPondFactor[FROG_COUNT];
 i8 frogClosestPondFactorOffsetSign[FROG_COUNT];
+f32 frogClosestPondAngleDiff[FROG_COUNT];
 f64 frogClosestDeathBondFactor[FROG_COUNT];
 
 f32 frogEnergy[FROG_COUNT];
@@ -131,15 +132,16 @@ u8 frogDead[FROG_COUNT];
 
 f64 frogFitness[FROG_COUNT];
 
-NeuralNetDef nnDef;
-NeuralNet* curGenNN[FROG_COUNT];
-NeuralNet* nextGenNN[FROG_COUNT];
+RecurrentNeuralNetDef nnDef;
+RecurrentNeuralNet* curGenNN[FROG_COUNT];
+RecurrentNeuralNet* nextGenNN[FROG_COUNT];
 i32 generationNumber = 0;
 
 f32 simulationTime = 0;
 
 bool dbgShowBars = false;
 bool dbgOverlayAvgWaterMap = false;
+i32 dbgViewerFrogId = 0;
 
 struct GenerationStats {
     i32 number = 0;
@@ -216,16 +218,21 @@ bool init()
     resetMap();
     resetFrogColors();
 
-    const i32 layers[] = {
+    /*const i32 layers[] = {
         4 + 4, // "water smell" corners, closest pond factor, angle, hydration, energy
-        10,
-        6,
+        8,
+        2 // angle, action
+    };*/
+
+    const i32 layers[] = {
+        2,
+        8,
         2 // angle, action
     };
 
-    makeNeuralNetDef(&nnDef, sizeof(layers)/sizeof(layers[0]), layers, 1.0);
-    neuralNetAlloc(curGenNN, FROG_COUNT, &nnDef);
-    neuralNetAlloc(nextGenNN, FROG_COUNT, &nnDef);
+    rnnMakeDef(&nnDef, sizeof(layers)/sizeof(layers[0]), layers, 1.0);
+    rnnAlloc(curGenNN, FROG_COUNT, &nnDef);
+    rnnAlloc(nextGenNN, FROG_COUNT, &nnDef);
 
     resetSimulation();
 
@@ -234,8 +241,8 @@ bool init()
 
 void cleanup()
 {
-    _aligned_free(curGenNN[0]);
-    _aligned_free(nextGenNN[0]);
+    rnnDealloc(curGenNN[0]);
+    rnnDealloc(nextGenNN[0]);
 }
 
 void run()
@@ -394,21 +401,15 @@ void resetMap()
         }
     }
 
+    memset(mapAvgWater, 0, sizeof(mapAvgWater));
+    for(i32 i = 0; i < MAP_SIZE; ++i) {
+        i32 maX = (i % MAP_WIDTH) / MAP_WATER_AVG_GRID_SIZE;
+        i32 maY = (i / MAP_WIDTH) / MAP_WATER_AVG_GRID_SIZE;
+        mapAvgWater[maY * MAP_WATER_AVG_WIDTH + maX] += mapData[i] == MAP_TILE_WATER ? 1.0f : 0.0f;
+    }
 
     for(i32 i = 0; i < MAP_WATER_AVG_SIZE; ++i) {
-        mapAvgWater[i] = 0;
-        i32 startX = (i % MAP_WATER_AVG_WIDTH) * MAP_WATER_AVG_GRID_SIZE;
-        i32 startY = (i / MAP_WATER_AVG_WIDTH) * MAP_WATER_AVG_GRID_SIZE;
-
-        for(i32 y = 0; y < MAP_WATER_AVG_GRID_SIZE; ++y) {
-            for(i32 x = 0; x < MAP_WATER_AVG_GRID_SIZE; ++x) {
-                i32 mx = startX + x;
-                i32 my = startY + y;
-                mapAvgWater[i] += mapData[my * MAP_WIDTH + mx] == MAP_TILE_WATER ? 1.0f : 0.0f;
-            }
-        }
-
-        mapAvgWater[i] /= MAP_WATER_AVG_GRID_SIZE * MAP_WATER_AVG_GRID_SIZE;
+        mapAvgWater[i] /= (f32)MAP_WATER_AVG_GRID_SIZE * MAP_WATER_AVG_GRID_SIZE;
     }
 
     const Color3 grassColor = {10, 50, 0};
@@ -515,7 +516,7 @@ void resetSimulation()
 {
     resetFrogs();
     generationNumber = 0;
-    neuralNetInitRandom(curGenNN, FROG_COUNT, &nnDef);
+    rnnInitRandom(curGenNN, FROG_COUNT, &nnDef);
 }
 
 void ImGui_ColoredRect(const ImVec2& size, const ImVec4& color)
@@ -556,55 +557,106 @@ void ImGui_NeuralNet(NeuralNet* nn, NeuralNetDef* def)
     }
 }
 
+void ImGui_RecurrentNeuralNet(RecurrentNeuralNet* nn, RecurrentNeuralNetDef* def)
+{
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (window->SkipItems)
+        return;
+
+    constexpr i32 cellsPerLine = 14;
+    const ImVec2 cellSize(10, 10);
+    i32 lines = def->neuronCount / cellsPerLine + 1;
+    ImVec2 size(cellsPerLine * cellSize.x, lines * cellSize.y);
+
+    ImVec2 pos = window->DC.CursorPos;
+    const ImRect bb(pos, pos + size);
+    ImGui::ItemSize(bb);
+
+    for(i32 i = 0; i < def->neuronCount; ++i) {
+        i32 isNormalVal = i < (def->neuronCount - def->hiddenStateNeuronCount);
+        f32 w = clamp(nn->values[i] * 0.5, 0.0, 1.0);
+        u32 color = 0xff000000 | ((u8)(0xff*w) << 16)| ((u8)(0xff*w*isNormalVal) << 8)| ((u8)(0xff*w));
+        i32 column = i % cellsPerLine;
+        i32 line = i / cellsPerLine;
+        ImVec2 offset(column * cellSize.x, line * cellSize.y);
+        ImGui::RenderFrame(pos + offset, pos + offset + cellSize, color, false, 0);
+    }
+}
+
 void ui_championViewer()
 {
-    i32 champId = 0;
-    f64 bestFitness = 0;
-    for(i32 i = 0; i < FROG_COUNT; ++i) {
-        if(!frogDead[i] && frogFitness[i] > bestFitness) {
-            champId = i;
-            bestFitness = frogFitness[i];
+    ImGui::Begin("Champion viewer");
+
+    static bool autoSelectBest = true;
+    ImGui::Checkbox("Auto-select best", &autoSelectBest);
+
+    if(autoSelectBest) {
+        f64 bestFitness = 0;
+        for(i32 i = 0; i < FROG_COUNT; ++i) {
+            if(!frogDead[i] && frogFitness[i] > bestFitness) {
+                dbgViewerFrogId = i;
+                bestFitness = frogFitness[i];
+            }
+        }
+    }
+    else {
+        ImGui::PushItemWidth(100);
+        ImGui::SliderInt("##frog_id", &dbgViewerFrogId, 0, FROG_COUNT-1); ImGui::SameLine();
+        if(ImGui::Button("Next alive")) {
+            for(i32 i = 1; i < FROG_COUNT; ++i) {
+                i32 id = (dbgViewerFrogId + i) % FROG_COUNT;
+                if(!frogDead[id]) {
+                    dbgViewerFrogId = id;
+                    break;
+                }
+            }
         }
     }
 
-    ImVec4 champColor(frogColor[champId].r/255.f, frogColor[champId].g/255.f, frogColor[champId].b/255.f, 1);
+    ImVec4 frogCol(frogColor[dbgViewerFrogId].r/255.f, frogColor[dbgViewerFrogId].g/255.f,
+                   frogColor[dbgViewerFrogId].b/255.f, 1);
 
-    ImGui::Begin("Champion viewer");
-
-    ImGui::Text("Frog_%d", champId);
-    ImGui::TextColored(ImVec4(0, 1, 0, 1), "fitness: %g", frogFitness[champId]);
+    ImGui::Text("Frog_%d", dbgViewerFrogId);
+    ImGui::TextColored(ImVec4(0, 1, 0, 1), "fitness: %g", frogFitness[dbgViewerFrogId]);
 
     ImGui::Separator();
 
     ImGui::BeginGroup();
-    ImGui_ColoredRect(ImVec2(32, 32), ImVec4(frogWaterSensors[champId].sens[0], 0, 0, 1)); ImGui::SameLine();
-    ImGui_ColoredRect(ImVec2(32, 32), ImVec4(frogWaterSensors[champId].sens[1], 0, 0, 1));
+    ImGui_ColoredRect(ImVec2(32, 32), ImVec4(frogWaterSensors[dbgViewerFrogId].sens[0], 0, 0, 1));
+    ImGui::SameLine();
+    ImGui_ColoredRect(ImVec2(32, 32), ImVec4(frogWaterSensors[dbgViewerFrogId].sens[1], 0, 0, 1));
 
-    ImGui_ColoredRect(ImVec2(32, 32), ImVec4(frogWaterSensors[champId].sens[2], 0, 0, 1)); ImGui::SameLine();
-    ImGui_ColoredRect(ImVec2(32, 32), ImVec4(frogWaterSensors[champId].sens[3], 0, 0, 1));
+    ImGui_ColoredRect(ImVec2(32, 32), ImVec4(frogWaterSensors[dbgViewerFrogId].sens[2], 0, 0, 1));
+    ImGui::SameLine();
+    ImGui_ColoredRect(ImVec2(32, 32), ImVec4(frogWaterSensors[dbgViewerFrogId].sens[3], 0, 0, 1));
     ImGui::EndGroup();
 
     ImGui::SameLine();
 
     ImGui::BeginGroup();
-    ImGui_ColoredRect(ImVec2(64, 32),
-                      ImVec4((frogClosestPondFactorOffsetSign[champId] + 1.0) * 0.5, 0, 0, 1));
-    f32 f = frogClosestDeathBondFactor[champId];
+    /*(ImVec2(64, 32),
+                      ImVec4((frogClosestPondFactorOffsetSign[champId] + 1.0) * 0.5, 0, 0, 1));*/
+    f32 red = (frogClosestPondAngleDiff[dbgViewerFrogId] + 1.0) * 0.5;
+    ImGui_ColoredRect(ImVec2(64, 32), ImVec4(red, 0, 0, 1));
+    f32 f = frogClosestDeathBondFactor[dbgViewerFrogId];
     ImGui_ColoredRect(ImVec2(64, 32), ImVec4(f, 0, f, 1));
     ImGui::EndGroup();
 
-    ImGui_NeuralNet(curGenNN[champId], &nnDef);
+    //ImGui::Text("pondAngle: %g", frogClosestPondAngleDiff[dbgViewerFrogId]);
+
+    ImGui_RecurrentNeuralNet(curGenNN[dbgViewerFrogId], &nnDef);
+    //ImGui_NeuralNet(curGenNN[dbgViewerFrogId], &nnDef);
 
     ImGui::Separator();
 
-    ImGui::Image((ImTextureID)(intptr_t)tex_frog[FROG_TEX_STILL],
+    ImGui::Image((ImTextureID)(intptr_t)tex_frog[!frogDead[dbgViewerFrogId] ? FROG_TEX_STILL:FROG_TEX_DEAD],
                  ImVec2(180, 180),
-                 ImVec2(0, 0), ImVec2(1, 1), champColor);
+                 ImVec2(0, 0), ImVec2(1, 1), frogCol);
 
 
     ImGui::Separator();
 
-    switch(frogInput[champId].action) {
+    switch(frogInput[dbgViewerFrogId].action) {
         case INPUT_ACTION_STILL: ImGui::TextUnformatted("STILL"); break;
         case INPUT_ACTION_JUMP:  ImGui::TextUnformatted("JUMPING"); break;
         case INPUT_ACTION_EAT:   ImGui::TextUnformatted("EAT"); break;
@@ -613,11 +665,11 @@ void ui_championViewer()
     ImGui::Separator();
 
     // energy bar
-    ImGui::ProgressBar(frogEnergy[champId]/ENERGY_TOTAL);
+    ImGui::ProgressBar(frogEnergy[dbgViewerFrogId]/ENERGY_TOTAL);
 
     // hydration bar
     ImGui::PushStyleColor(ImGuiCol_PlotHistogram, 0xffff9d00);
-    ImGui::ProgressBar(frogHydration[champId]/ENERGY_TOTAL);
+    ImGui::ProgressBar(frogHydration[dbgViewerFrogId]/ENERGY_TOTAL);
     ImGui::PopStyleColor(1);
 
     ImGui::End();
@@ -644,7 +696,7 @@ void doUI()
 
         ImGui::TextUnformatted("Game");
         ImGui::BeginGroup();
-            ImGui::SliderInt("Time scale", &timeScale, 1, 10);
+            ImGui::SliderInt("Time scale", &timeScale, 1, 20);
 
             if(ImGui::Button("Reset game")) {
                 resetFrogs();
@@ -665,7 +717,7 @@ void doUI()
     // last generation statistics window
     ImGui::Begin("Last generation");
 
-    ImGui::Text("Generation #%d", lastGenStats.number);
+    ImGui::Text("Generation %d", lastGenStats.number);
     ImGui::Separator();
 
     ImGui::TextColored(ImVec4(0, 1, 0, 1), "Fitness max: %g", lastGenStats.maxFitness);
@@ -680,22 +732,22 @@ void doUI()
     f32 pastFitness[STATS_HISTORY_COUNT];
     f32 maxPastFitness = 0;
     for(i32 i = 0; i < STATS_HISTORY_COUNT; ++i) {
-        pastFitness[i] = pastGenStats[i].maxFitness;
+        pastFitness[i] = pastGenStats[i].avgFitness;
         maxPastFitness = max(maxPastFitness, pastFitness[i]);
     }
 
     ImGui::PushItemWidth(180.0f);
-    ImGui::PlotHistogram("##max_fitness", pastFitness, IM_ARRAYSIZE(pastFitness),
+    ImGui::PlotLines("##max_fitness", pastFitness, IM_ARRAYSIZE(pastFitness),
                          0, NULL, 0.0f, maxPastFitness, ImVec2(0,50));
 
     ImGui::End();
 
-    ImGui::ShowDemoWindow();
+    //ImGui::ShowDemoWindow();
 }
 
 void updateNNs()
 {
-    NeuralNet* nnets[FROG_COUNT];
+    RecurrentNeuralNet* nnets[FROG_COUNT];
     i32 nnetsCount = 0;
     //const f32 waterSmellSquareCount = VISION_WIDTH * VISION_WIDTH * 0.25;
 
@@ -747,6 +799,45 @@ void updateNNs()
 #endif
     }
 
+    for(i32 i = 0; i < FROG_COUNT; ++i) {
+        if(frogDead[i]) continue;
+        const i32 frogTileX = frogPos[i].x / TILE_SIZE;
+        const i32 frogTileY = frogPos[i].y / TILE_SIZE;
+        const Vec2 frogTilePos = vec2Make(frogTileX, frogTileY);
+
+        f32 minDist = FLT_MAX;
+        Vec2 chosenPondPos;
+        for(i32 p = 0; p < pondCount; ++p) {
+            const Vec2 pondTilePos = vec2Make(pondPos[p] % MAP_WIDTH, pondPos[p] / MAP_WIDTH);
+            f32 dist = vec2Distance(&frogTilePos, &pondTilePos) - pondRadius[p];
+
+            if(dist < minDist) {
+                minDist = dist;
+                chosenPondPos = {pondTilePos.x * TILE_SIZE, pondTilePos.y * TILE_SIZE};
+            }
+        }
+
+        Vec2 pondV = vec2Minus(&frogPos[i], &chosenPondPos);
+        //pondV = vec2Normalize(&pondV);
+        Vec2 vx = {1.0f, 0.0f};
+        Vec2 dir = {cosf(frogAngle[i]), sinf(frogAngle[i])};
+        //frogClosestPondAngleDiff[i] = vec2Dot(&pondV, &dir);
+        f32 diff = -vec2AngleBetween(&dir, &pondV);
+
+        frogClosestPondAngleDiff[i] = ((diff / PI) + 1.0) * 0.5;
+        assert(frogClosestPondAngleDiff[i] >= 0.0 && frogClosestPondAngleDiff[i] <= 1.0);
+        /*f32 angle = vec2Angle(&pondV);
+        f32 diff = angle - frogAngle[i];
+        if(diff < 0.0f) {
+            diff += TAU;
+        }
+        else if(diff > TAU) {
+            diff -= TAU;
+        }
+        frogClosestPondAngleDiff[i] = diff / TAU;
+        assert(frogClosestPondAngleDiff[i] >= 0.0f && frogClosestPondAngleDiff[i] <= 1.0f);*/
+    }
+
     f64 oldClosestPondFactor[FROG_COUNT];
     memmove(oldClosestPondFactor, frogClosestPondFactor, sizeof(frogClosestPondFactor));
 
@@ -773,8 +864,8 @@ void updateNNs()
         }
         else {
             frogClosestPondFactor[i] = 1.0 / minDist;
+            frogClosestPondFactor[i] = 1.0 / (minDist / ((MAP_WIDTH + MAP_HEIGHT) * TILE_SIZE));
         }
-
     }
 
     for(i32 i = 0; i < FROG_COUNT; ++i) {
@@ -790,6 +881,13 @@ void updateNNs()
         }
     }
 
+    u8 frogIsInWater[FROG_COUNT];
+    for(i32 i = 0; i < FROG_COUNT; ++i) {
+       const i32 frogTileX = frogPos[i].x / TILE_SIZE;
+       const i32 frogTileY = frogPos[i].y / TILE_SIZE;
+       frogIsInWater[i] = mapData[frogTileX + frogTileY * MAP_WIDTH] == MAP_TILE_WATER;
+    }
+
     // how close are we to map bounds
     for(i32 i = 0; i < FROG_COUNT; ++i) {
         if(frogDead[i]) continue;
@@ -803,27 +901,34 @@ void updateNNs()
     for(i32 i = 0; i < FROG_COUNT; ++i) {
         if(frogDead[i]) continue;
         f64* input = curGenNN[i]->values;
-        input[0] = frogWaterSensors[i].sens[0];
+        /*input[0] = frogWaterSensors[i].sens[0];
         input[1] = frogWaterSensors[i].sens[1];
         input[2] = frogWaterSensors[i].sens[2];
         input[3] = frogWaterSensors[i].sens[3];
-        input += 4;
+        input += 4;*/
 
+        //input[0] = frogClosestPondAngleDiff[i];
         input[0] = frogClosestPondFactorOffsetSign[i];
-        input[1] = frogClosestDeathBondFactor[i];
-        input[2] = frogAngle[i];
+        input[1] = frogIsInWater[i];
+        //input[1] = frogClosestDeathBondFactor[i];
+        //input[2] = frogAngle[i] / TAU;
         //input[2] = frogEnergy[i];
-        input[3] = frogHydration[i];
-        input += 4;
+        //input[3] = frogHydration[i];
+        input += 2;
         assert(input - curGenNN[i]->values == nnDef.inputNeuronCount);
         nnets[nnetsCount++] = curGenNN[i];
     }
 
-    neuralNetPropagate(nnets, nnetsCount, &nnDef);
+    //rnnPropagate(nnets, nnetsCount, &nnDef);
+    rnnPropagateWide(nnets, nnetsCount, &nnDef);
 
     for(i32 i = 0; i < FROG_COUNT; ++i) {
         if(frogDead[i]) continue;
-        f64* output = &curGenNN[i]->values[nnDef.neuronCount-2];
+        f64* output = curGenNN[i]->output;
+        /*output[0] = (output[0] + 1.0) * 0.5;
+        output[1] = (output[1] + 1.0) * 0.5;*/
+        assert(output[0] >= 0.0 && output[0] <= 1.0);
+        assert(output[1] >= 0.0 && output[1] <= 1.0);
         frogInput[i].angle = output[0] * TAU;
         frogInput[i].action = output[1] * 3;
         if(frogInput[i].action > INPUT_ACTION_EAT) {
@@ -844,7 +949,7 @@ void updatePhysics()
             bool doJump = jumpDeltaMs < FROG_ANIM_JUMP;
 
             if(doJump) {
-                f32 angle = frogAngle[i] - PI * 0.5;
+                f32 angle = frogAngle[i];
                 Vec2 moveVec = vec2Make(cosf(angle) * FROG_SPEED * FRAME_DT,
                                         sinf(angle) * FROG_SPEED * FRAME_DT);
                 frogPos[i] = vec2Add(&frogPos[i], &moveVec);
@@ -865,6 +970,7 @@ void updateMechanics()
         if(frogHydration[i] <= 0) {
             frogHydration[i] = 0;
             frogDead[i] = true;
+            frogFitness[i] *= 0.5; // punish frogs that die of dehydration
             curGenStats.deathsByDehydratation++;
         }
     }
@@ -932,10 +1038,10 @@ void updateMechanics()
             frogHydration[i] += HYDRATION_GAIN_PER_SEC * FRAME_DT;
             frogHydration[i] = min(frogHydration[i], HYDRATION_TOTAL);
         }
-        else if(mapData[my * MAP_WIDTH + mx] == MAP_TILE_DEATH) {
+        /*else if(mapData[my * MAP_WIDTH + mx] == MAP_TILE_DEATH) {
             frogDead[i] = true;
             curGenStats.deathsByBorder++;
-        }
+        }*/
     }
 
     simulationTime += FRAME_DT;
@@ -945,6 +1051,7 @@ void updateMechanics()
 
         //frogFitness[i] += FRAME_DT;
         frogFitness[i] += frogHydration[i] / HYDRATION_TOTAL;
+        //frogFitness[i] += (frogEnergy[i] / ENERGY_TOTAL) * 0.5;
         //frogFitness[i] += frogFliesEatenCount;
 
         if(simulationTime >= SIMULATION_MAX_TIME) {
@@ -977,8 +1084,8 @@ void newGeneration()
     LOG("#%d maxFitness=%.5f avg=%.5f", lastGenStats.number,
         lastGenStats.maxFitness, lastGenStats.avgFitness);
 
-    i32 reinsertCount = reinsertTruncate(FROG_COUNT*0.1, FROG_COUNT, frogFitness,
-                                         nextGenNN, curGenNN, &nnDef);
+    i32 reinsertCount = reinsertTruncateRNN(FROG_COUNT*0.1, FROG_COUNT, frogFitness,
+                                            nextGenNN, curGenNN, &nnDef);
 
     const i32 tournamentSize = 15;
 
@@ -986,12 +1093,26 @@ void newGeneration()
     for(i32 i = reinsertCount; i < FROG_COUNT; ++i) {
         i32 parentA = selectTournament(FROG_COUNT, tournamentSize, -1, frogFitness);
         i32 parentB = selectTournament(FROG_COUNT, tournamentSize, parentA, frogFitness);
-        crossover(i, parentA, parentB, nextGenNN, curGenNN, &nnDef);
+        crossover(nextGenNN[i]->weights, curGenNN[parentA]->weights, curGenNN[parentB]->weights,
+                  nnDef.weightTotalCount);
     }
 
     // mutate
     const f32 mutationRate = 0.005f;
-    i32 mutationCount = mutate(mutationRate, 0.5, FROG_COUNT, nextGenNN, &nnDef);
+    i32 mutationCount = 0;
+    const i32 weightTotalCount = nnDef.weightTotalCount;
+    for(i32 i = 0; i < reinsertCount; ++i) {
+        f64 factor = ((f64)i/reinsertCount) * 0.5;
+        for(i32 s = 0; s < weightTotalCount; ++s) {
+            if(randf64(0.0, 1.0) < mutationRate) {
+                mutationCount++;
+                nextGenNN[i]->weights[s] += randf64(-factor, factor);
+            }
+        }
+    }
+
+    mutationCount += mutateRNN(mutationRate, 0.5, FROG_COUNT - reinsertCount,
+                                 nextGenNN + reinsertCount, &nnDef);
 
     LOG("mutationRate=%g mutationCount=%d", mutationRate, mutationCount);
     memmove(curGenNN[0], nextGenNN[0], nnDef.neuralNetSize * FROG_COUNT);
@@ -1034,7 +1155,7 @@ void newFrame()
     // frog transforms
     for(i32 i = 0; i < FROG_COUNT; ++i) {
         frogTf[i].pos = frogPos[i];
-        frogTf[i].rot = frogAngle[i];
+        frogTf[i].rot = frogAngle[i] + PI * 0.5;
 
         switch(frogTexId[i]) {
             case FROG_TEX_STILL:
@@ -1159,23 +1280,14 @@ void render()
         drawQuadBatch(barQuad, barCount);
     }
 
-    i32 champId = 0;
-    f64 bestFitness = 0;
-    for(i32 i = 0; i < FROG_COUNT; ++i) {
-        if(!frogDead[i] && frogFitness[i] > bestFitness) {
-            champId = i;
-            bestFitness = frogFitness[i];
-        }
-    }
-
-    f32 champX = frogPos[champId].x;
-    f32 champY = frogPos[champId].y;
+    f32 champX = frogPos[dbgViewerFrogId].x;
+    f32 champY = frogPos[dbgViewerFrogId].y;
     constexpr Color4 champLineColor = {255, 0, 0, 255};
     constexpr Color4 champColor = {255, 0, 0, 128};
 
     Line champLine;
     champLine.p1 = vec2Make(MAP_WIDTH * TILE_SIZE * 0.5, 0);
-    champLine.p2 = frogPos[champId];
+    champLine.p2 = frogPos[dbgViewerFrogId];
     champLine.c1 = champLineColor;
     champLine.c2 = champLineColor;
     drawLineBatch(&champLine, 1);
@@ -1202,6 +1314,28 @@ i32 main()
     LOG("\\   | |  | |   /");
     LOG(" ww ooo  ooo ww");
     LOG("\n");
+
+    testPropagateNN();
+    testPropagateRNN();
+    testPropagateRNNWide();
+
+#if 1
+    // test vec math
+    Vec2 v0 = {1, 0};
+    Vec2 vhpi = {0, 1};
+    Vec2 vpi = {-1, 0};
+    Vec2 v1hpi = {0, -1};
+    Vec2 v3 = {-1, -1};
+    /*assert(vec2Angle(&v0) == 0.0);
+    assert(fabs(vec2Angle(&vhpi) - PI/2.0) < 0.001f);
+    assert(fabs(vec2Angle(&vpi) - PI) < 0.001f);
+    assert(fabs(vec2Angle(&v1hpi) - -PI * 1.5) < 0.001f);*/
+    LOG("%g", vec2Angle(&v0));
+    LOG("%g", vec2Angle(&vhpi));
+    LOG("%g", vec2Angle(&vpi));
+    LOG("%g", vec2Angle(&v1hpi));
+    LOG("%g", vec2Angle(&v3));
+#endif
 
     timeInit();
 
