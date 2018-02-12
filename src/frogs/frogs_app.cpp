@@ -20,7 +20,7 @@
 
 #define MAP_WIDTH 256
 #define MAP_HEIGHT 128
-#define MAP_WATER_AVG_GRID_SIZE 16
+#define MAP_WATER_AVG_GRID_SIZE 8
 static_assert(MAP_WIDTH % MAP_WATER_AVG_GRID_SIZE == 0,"");
 static_assert(MAP_HEIGHT % MAP_WATER_AVG_GRID_SIZE == 0,"");
 constexpr i32 MAP_SIZE = MAP_WIDTH*MAP_HEIGHT;
@@ -40,6 +40,7 @@ constexpr i32 MAP_WATER_AVG_SIZE = MAP_WATER_AVG_WIDTH*MAP_WATER_AVG_HEIGHT;
 #define FROG_JUMP_CD 450
 #define FROG_TONGUE_CD 300
 #define FROG_WATER_SENSOR_OFFSET (FROG_SIZE + 100.f)
+#define FROG_TAG_BITS 7
 
 #define ENERGY_TOTAL 100.0f
 #define ENERGY_JUMP_DRAIN 2.0f
@@ -83,6 +84,7 @@ struct FrogInput
 
 struct WaterSensors
 {
+    f32 center;
     f32 sens[4];
 };
 
@@ -108,7 +110,7 @@ u32 tex_mapAvgWater;
 
 i32 pondPos[MAP_POND_MAX_COUNT];
 i32 pondRadius[MAP_POND_MAX_COUNT];
-i32 pondCount = 1;
+i32 pondCount = 4;
 
 i32 tex_frog[FROG_TEX_COUNT];
 
@@ -131,6 +133,8 @@ f32 frogHydration[FROG_COUNT];
 u8 frogDead[FROG_COUNT];
 
 f64 frogFitness[FROG_COUNT];
+u8 curSpeciesTag[FROG_COUNT];
+u8 nextSpeciesTag[FROG_COUNT];
 
 RecurrentNeuralNetDef nnDef;
 RecurrentNeuralNet* curGenNN[FROG_COUNT];
@@ -140,8 +144,10 @@ i32 generationNumber = 0;
 f32 simulationTime = 0;
 
 bool dbgShowBars = false;
+bool dbgShowDirections = false;
 bool dbgOverlayAvgWaterMap = false;
 i32 dbgViewerFrogId = 0;
+Vec2 dbgLastMouseLeftClick = {0, 0};
 
 struct GenerationStats {
     i32 number = 0;
@@ -154,6 +160,9 @@ struct GenerationStats {
 GenerationStats curGenStats;
 GenerationStats lastGenStats;
 GenerationStats pastGenStats[STATS_HISTORY_COUNT];
+
+f64 outMin = 1.0;
+f64 outMax = 0.0;
 
 bool init()
 {
@@ -225,8 +234,8 @@ bool init()
     };*/
 
     const i32 layers[] = {
-        2,
-        8,
+        6,
+        4,
         2 // angle, action
     };
 
@@ -312,6 +321,11 @@ void handleEvent(SDL_Event* event)
     if(event->type == SDL_MOUSEBUTTONDOWN) {
         if(event->button.button == SDL_BUTTON_RIGHT) {
             mouseRightButDown = true;
+            return;
+        }
+        if(event->button.button == SDL_BUTTON_LEFT) {
+            mouseSelectFrog(event->button.x, event->button.y);
+            return;
         }
     }
 
@@ -336,6 +350,31 @@ void handleEvent(SDL_Event* event)
             viewZoom *= 1.10f * -event->wheel.y;
         }
     }
+}
+
+void mouseSelectFrog(f32 mx, f32 my)
+{
+    f32 x = viewX + mx * viewZoom;
+    f32 y = viewY + my * viewZoom;
+    Vec2 mWorldPos = {x, y};
+
+    f32 closestDist = FLT_MAX;
+    i32 closestId = 0;
+
+    for(i32 i = 0; i < FROG_COUNT; ++i) {
+        f32 d = vec2Distance(&frogPos[i], &mWorldPos);
+        if(d < closestDist) {
+            closestDist = d;
+            closestId = i;
+        }
+    }
+
+    if(closestDist < 50) {
+        dbgViewerFrogId = closestId;
+    }
+
+    dbgLastMouseLeftClick.x = x;
+    dbgLastMouseLeftClick.y = y;
 }
 
 void updateCamera()
@@ -512,8 +551,16 @@ void resetFrogs()
     }
 }
 
+void resetFrogSpecies()
+{
+    for(i32 i = 0; i < FROG_COUNT; ++i) {
+        curSpeciesTag[i] = randf64(0, (1 << FROG_TAG_BITS)-1);
+    }
+}
+
 void resetSimulation()
 {
+    resetFrogSpecies();
     resetFrogs();
     generationNumber = 0;
     rnnInitRandom(curGenNN, FROG_COUNT, &nnDef);
@@ -621,14 +668,25 @@ void ui_championViewer()
 
     ImGui::Separator();
 
+    const ImVec2 ss(20, 20); // sensor size
     ImGui::BeginGroup();
-    ImGui_ColoredRect(ImVec2(32, 32), ImVec4(frogWaterSensors[dbgViewerFrogId].sens[0], 0, 0, 1));
+    ImGui_ColoredRect(ss, ImVec4(frogWaterSensors[dbgViewerFrogId].sens[0], 0, 0, 1));
     ImGui::SameLine();
-    ImGui_ColoredRect(ImVec2(32, 32), ImVec4(frogWaterSensors[dbgViewerFrogId].sens[1], 0, 0, 1));
+    ImGui_ColoredRect(ss, ImVec4(0, 0, 0, 1));
+    ImGui::SameLine();
+    ImGui_ColoredRect(ss, ImVec4(frogWaterSensors[dbgViewerFrogId].sens[1], 0, 0, 1));
 
-    ImGui_ColoredRect(ImVec2(32, 32), ImVec4(frogWaterSensors[dbgViewerFrogId].sens[2], 0, 0, 1));
+    ImGui_ColoredRect(ss, ImVec4(0, 0, 0, 1));
     ImGui::SameLine();
-    ImGui_ColoredRect(ImVec2(32, 32), ImVec4(frogWaterSensors[dbgViewerFrogId].sens[3], 0, 0, 1));
+    ImGui_ColoredRect(ss, ImVec4(frogWaterSensors[dbgViewerFrogId].center, 0, 0, 1));
+    ImGui::SameLine();
+    ImGui_ColoredRect(ss, ImVec4(0, 0, 0, 1));
+
+    ImGui_ColoredRect(ss, ImVec4(frogWaterSensors[dbgViewerFrogId].sens[2], 0, 0, 1));
+    ImGui::SameLine();
+    ImGui_ColoredRect(ss, ImVec4(0, 0, 0, 1));
+    ImGui::SameLine();
+    ImGui_ColoredRect(ss, ImVec4(frogWaterSensors[dbgViewerFrogId].sens[3], 0, 0, 1));
     ImGui::EndGroup();
 
     ImGui::SameLine();
@@ -675,6 +733,17 @@ void ui_championViewer()
     ImGui::End();
 }
 
+void ui_debug()
+{
+    ImGui::Begin("Debug");
+
+        ImGui::Checkbox("Show bars", &dbgShowBars);
+        ImGui::Checkbox("Show directions", &dbgShowDirections);
+        ImGui::Checkbox("Overlay water average", &dbgOverlayAvgWaterMap);
+
+    ImGui::End();
+}
+
 void doUI()
 {
     ImGui::StyleColorsDark();
@@ -705,12 +774,7 @@ void doUI()
 
     ImGui::End();
 
-    ImGui::Begin("Debug");
-
-        ImGui::Checkbox("Show bars", &dbgShowBars);
-        ImGui::Checkbox("Overlay water average", &dbgOverlayAvgWaterMap);
-
-    ImGui::End();
+    ui_debug();
 
     ui_championViewer();
 
@@ -761,6 +825,11 @@ void updateNNs()
     for(i32 i = 0; i < FROG_COUNT; ++i) {
         if(frogDead[i]) continue;
 
+        // center sensor
+        i32 centerX = frogPos[i].x / TILE_SIZE;
+        i32 centerY = frogPos[i].y / TILE_SIZE;
+        frogWaterSensors[i].center = mapData[centerX + centerY * MAP_WIDTH] == MAP_TILE_WATER ? 1.0:0.0;
+
         for(i32 s = 0; s < 4; ++s) {
             i32 sensorX = (frogPos[i].x + sensorOffsetPos[s][0]) / (TILE_SIZE * MAP_WATER_AVG_GRID_SIZE);
             i32 sensorY = (frogPos[i].y + sensorOffsetPos[s][1]) / (TILE_SIZE * MAP_WATER_AVG_GRID_SIZE);
@@ -800,7 +869,7 @@ void updateNNs()
     }
 
     for(i32 i = 0; i < FROG_COUNT; ++i) {
-        if(frogDead[i]) continue;
+        //if(frogDead[i]) continue;
         const i32 frogTileX = frogPos[i].x / TILE_SIZE;
         const i32 frogTileY = frogPos[i].y / TILE_SIZE;
         const Vec2 frogTilePos = vec2Make(frogTileX, frogTileY);
@@ -817,15 +886,15 @@ void updateNNs()
             }
         }
 
-        Vec2 pondV = vec2Minus(&frogPos[i], &chosenPondPos);
+        Vec2 pondV = vec2Minus(&chosenPondPos, &frogPos[i]);
         //pondV = vec2Normalize(&pondV);
         Vec2 vx = {1.0f, 0.0f};
         Vec2 dir = {cosf(frogAngle[i]), sinf(frogAngle[i])};
         //frogClosestPondAngleDiff[i] = vec2Dot(&pondV, &dir);
-        f32 diff = -vec2AngleBetween(&dir, &pondV);
+        f32 diff = vec2AngleBetween(&dir, &pondV);
 
-        frogClosestPondAngleDiff[i] = ((diff / PI) + 1.0) * 0.5;
-        assert(frogClosestPondAngleDiff[i] >= 0.0 && frogClosestPondAngleDiff[i] <= 1.0);
+        frogClosestPondAngleDiff[i] = diff / PI;
+        assert(frogClosestPondAngleDiff[i] >= -1.0 && frogClosestPondAngleDiff[i] <= 1.0);
         /*f32 angle = vec2Angle(&pondV);
         f32 diff = angle - frogAngle[i];
         if(diff < 0.0f) {
@@ -901,15 +970,15 @@ void updateNNs()
     for(i32 i = 0; i < FROG_COUNT; ++i) {
         if(frogDead[i]) continue;
         f64* input = curGenNN[i]->values;
-        /*input[0] = frogWaterSensors[i].sens[0];
+        input[0] = frogWaterSensors[i].sens[0];
         input[1] = frogWaterSensors[i].sens[1];
         input[2] = frogWaterSensors[i].sens[2];
         input[3] = frogWaterSensors[i].sens[3];
-        input += 4;*/
+        input += 4;
 
-        //input[0] = frogClosestPondAngleDiff[i];
-        input[0] = frogClosestPondFactorOffsetSign[i];
-        input[1] = frogIsInWater[i];
+        input[0] = frogClosestPondAngleDiff[i];
+        input[1] = frogHydration[i] / HYDRATION_TOTAL;
+        //input[1] = frogIsInWater[i];
         //input[1] = frogClosestDeathBondFactor[i];
         //input[2] = frogAngle[i] / TAU;
         //input[2] = frogEnergy[i];
@@ -922,6 +991,7 @@ void updateNNs()
     //rnnPropagate(nnets, nnetsCount, &nnDef);
     rnnPropagateWide(nnets, nnetsCount, &nnDef);
 
+
     for(i32 i = 0; i < FROG_COUNT; ++i) {
         if(frogDead[i]) continue;
         f64* output = curGenNN[i]->output;
@@ -929,13 +999,21 @@ void updateNNs()
         output[1] = (output[1] + 1.0) * 0.5;*/
         assert(output[0] >= 0.0 && output[0] <= 1.0);
         assert(output[1] >= 0.0 && output[1] <= 1.0);
-        frogInput[i].angle = output[0] * TAU;
+
+        outMin = min(outMin, output[0]);
+        outMax = max(outMax, output[0]);
+
+        frogInput[i].angle = output[0] * TAU * 10.0;
+        if(frogInput[i].angle > TAU) {
+            f64 excess = (i32)(frogInput[i].angle/TAU) * TAU;
+            frogInput[i].angle -= excess;
+        }
+
         frogInput[i].action = output[1] * 3;
         if(frogInput[i].action > INPUT_ACTION_EAT) {
             frogInput[i].action = INPUT_ACTION_EAT;
         }
     }
-
 }
 
 void updatePhysics()
@@ -1051,7 +1129,7 @@ void updateMechanics()
 
         //frogFitness[i] += FRAME_DT;
         frogFitness[i] += frogHydration[i] / HYDRATION_TOTAL;
-        //frogFitness[i] += (frogEnergy[i] / ENERGY_TOTAL) * 0.5;
+        frogFitness[i] += (frogEnergy[i] / ENERGY_TOTAL) * 0.5;
         //frogFitness[i] += frogFliesEatenCount;
 
         if(simulationTime >= SIMULATION_MAX_TIME) {
@@ -1074,6 +1152,10 @@ void updateMechanics()
 
 void newGeneration()
 {
+    LOG("outMin=%g outMax=%g", outMin, outMax);
+    outMin = 1.0;
+    outMax = 0.0;
+
     lastGenStats = curGenStats;
     memmove(pastGenStats, pastGenStats+1, sizeof(pastGenStats) - sizeof(pastGenStats[0]));
     pastGenStats[STATS_HISTORY_COUNT-1] = lastGenStats;
@@ -1084,11 +1166,12 @@ void newGeneration()
     LOG("#%d maxFitness=%.5f avg=%.5f", lastGenStats.number,
         lastGenStats.maxFitness, lastGenStats.avgFitness);
 
-    i32 reinsertCount = reinsertTruncateRNN(FROG_COUNT*0.1, FROG_COUNT, frogFitness,
-                                            nextGenNN, curGenNN, &nnDef);
+    i32 reinsertCount = reinsertTruncateRNNSpecies(FROG_COUNT*0.1, FROG_COUNT, frogFitness,
+                                    nextGenNN, curGenNN, &nnDef, curSpeciesTag, nextSpeciesTag);
 
     const i32 tournamentSize = 15;
 
+#if 0
     // cross over
     for(i32 i = reinsertCount; i < FROG_COUNT; ++i) {
         i32 parentA = selectTournament(FROG_COUNT, tournamentSize, -1, frogFitness);
@@ -1096,6 +1179,24 @@ void newGeneration()
         crossover(nextGenNN[i]->weights, curGenNN[parentA]->weights, curGenNN[parentB]->weights,
                   nnDef.weightTotalCount);
     }
+#endif
+
+    i32 crossoverMisses = 0;
+    // cross over
+    for(i32 i = reinsertCount; i < FROG_COUNT; ++i) {
+        i32 parentA = selectTournament(FROG_COUNT, 20, -1, frogFitness);
+        const u8 parentATag = curSpeciesTag[parentA];
+        i32 parentB = selectTournamentSpecies(FROG_COUNT, 1000, parentA, frogFitness, curSpeciesTag,
+                                              parentATag);
+        crossover(nextGenNN[i]->weights, curGenNN[parentA]->weights, curGenNN[parentB]->weights,
+                  nnDef.weightTotalCount);
+        if(curSpeciesTag[parentB] != parentATag) {
+            crossoverMisses++;
+        }
+        nextSpeciesTag[i] = curSpeciesTag[parentB];
+    }
+
+    LOG("crossover misses: %d", crossoverMisses);
 
     // mutate
     const f32 mutationRate = 0.005f;
@@ -1111,11 +1212,35 @@ void newGeneration()
         }
     }
 
+#if 0
     mutationCount += mutateRNN(mutationRate, 0.5, FROG_COUNT - reinsertCount,
                                  nextGenNN + reinsertCount, &nnDef);
+#endif
 
-    LOG("mutationRate=%g mutationCount=%d", mutationRate, mutationCount);
+    const f32 mutationTagRate = 0.005f;
+    i32 tagMutations = 0;
+    for(i32 i = reinsertCount; i < FROG_COUNT; ++i) {
+        const f64 factor = 0.5;
+        for(i32 s = 0; s < weightTotalCount; ++s) {
+            if(randf64(0.0, 1.0) < mutationRate) {
+                mutationCount++;
+                nextGenNN[i]->weights[s] += randf64(-factor, factor);
+            }
+        }
+
+        if(randf64(0.0, 1.0) < mutationTagRate) {
+            tagMutations++;
+            i32 bit = randi64(0, FROG_TAG_BITS-1);
+            u8 prevSpecies = nextSpeciesTag[i];
+            nextSpeciesTag[i] ^= 1 << bit;
+            /*LOG("species transition %x -> %x", prevSpecies, nextSpeciesTag[i]);
+            assert(nextSpeciesTag[i] <= (1 << FROG_TAG_BITS) - 1);*/
+        }
+    }
+
+    LOG("mutationRate=%g mutationCount=%d tagMutations=%d", mutationRate, mutationCount, tagMutations);
     memmove(curGenNN[0], nextGenNN[0], nnDef.neuralNetSize * FROG_COUNT);
+    memmove(curSpeciesTag, nextSpeciesTag, sizeof(curSpeciesTag));
 
     resetMap();
     resetFrogs();
@@ -1239,7 +1364,7 @@ void render()
             if(frogTexId[i] == t) {
                 i32 id = batchCount++;
                 tf[id] = frogTf[i];
-                color[id] = frogColor[i];
+                color[id] = frogColor[curSpeciesTag[i]];
                 if(batchCount == BATCH_MAX) {
                     drawSpriteBatch(tex_frog[t], tf, color, BATCH_MAX);
                     batchCount = 0;
@@ -1280,6 +1405,34 @@ void render()
         drawQuadBatch(barQuad, barCount);
     }
 
+    if(dbgShowDirections) {
+        Line lines[FROG_COUNT];
+        const Color4 pink = {255, 0, 255, 255};
+        const Color4 white = {255, 255, 255, 255};
+
+        // dir angle
+        for(i32 i = 0; i < FROG_COUNT; ++i) {
+            f32 a = frogAngle[i];
+            lines[i].c1 = white;
+            lines[i].c2 = white;
+            lines[i].p1 = frogPos[i];
+            Vec2 dir = {cosf(a) * 100, sinf(a) * 100};
+            lines[i].p2 = vec2Add(&frogPos[i], &dir);
+        }
+        drawLineBatch(lines, FROG_COUNT, 1.0f);
+
+        // pond angle
+        for(i32 i = 0; i < FROG_COUNT; ++i) {
+            f32 a = frogAngle[i] + frogClosestPondAngleDiff[i] * PI;
+            lines[i].c1 = pink;
+            lines[i].c2 = pink;
+            lines[i].p1 = frogPos[i];
+            Vec2 dir = {cosf(a) * 100, sinf(a) * 100};
+            lines[i].p2 = vec2Add(&frogPos[i], &dir);
+        }
+        drawLineBatch(lines, FROG_COUNT, 2.0f);
+    }
+
     f32 champX = frogPos[dbgViewerFrogId].x;
     f32 champY = frogPos[dbgViewerFrogId].y;
     constexpr Color4 champLineColor = {255, 0, 0, 255};
@@ -1295,6 +1448,10 @@ void render()
     Quad championOverlay = quadOneColor(champX - FROG_SIZE, champX + FROG_SIZE,
                                         champY - FROG_SIZE, champY + FROG_SIZE, champColor);
     drawQuadBatch(&championOverlay, 1);
+
+    /*Quad quad = quadOneColor(dbgLastMouseLeftClick.x, dbgLastMouseLeftClick.x + 200.f,
+                             dbgLastMouseLeftClick.y, dbgLastMouseLeftClick.y + 200.f, {255, 128, 0, 255});
+    drawQuadBatch(&quad, 1);*/
 
     imguiRender();
 }
@@ -1315,26 +1472,10 @@ i32 main()
     LOG(" ww ooo  ooo ww");
     LOG("\n");
 
+#if 0
     testPropagateNN();
     testPropagateRNN();
     testPropagateRNNWide();
-
-#if 1
-    // test vec math
-    Vec2 v0 = {1, 0};
-    Vec2 vhpi = {0, 1};
-    Vec2 vpi = {-1, 0};
-    Vec2 v1hpi = {0, -1};
-    Vec2 v3 = {-1, -1};
-    /*assert(vec2Angle(&v0) == 0.0);
-    assert(fabs(vec2Angle(&vhpi) - PI/2.0) < 0.001f);
-    assert(fabs(vec2Angle(&vpi) - PI) < 0.001f);
-    assert(fabs(vec2Angle(&v1hpi) - -PI * 1.5) < 0.001f);*/
-    LOG("%g", vec2Angle(&v0));
-    LOG("%g", vec2Angle(&vhpi));
-    LOG("%g", vec2Angle(&vpi));
-    LOG("%g", vec2Angle(&v1hpi));
-    LOG("%g", vec2Angle(&v3));
 #endif
 
     timeInit();

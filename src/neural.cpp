@@ -8,8 +8,8 @@
 #include <stddef.h>
 
 #define sigmoid(val) (1.0 / (1.0 + expf(-val)))
-//#define activate(val) tanhf(val)
-#define activate(val) min(max(0, val), 10.0)
+#define activate(val) tanh(val)
+//#define activate(val) min(max(0, val), 10.0)
 //#define output_activate(val, outputCount) ((tanhf(val) + 1.0) * 0.5)
 #define pow2(val) (val * val)
 
@@ -251,14 +251,15 @@ void rnnPropagate(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeu
                 value += weights[s] * hiddenStateVals[s];
             }
             value += bias; // bias
-            output[n] = exp1(clamp(value, -10.0, 10.0));
-            assert(output[n] >= 0.0);
+            /*output[n] = exp1(clamp(value, -10.0, 10.0));
+            assert(output[n] >= 0.0);*/
+            output[n] = (tanh(value) + 1.0) * 0.5;
             outputTotal += output[n];
             weights += hiddenNeuronCount;
         }
 
         // softmax
-        if(outputTotal == 0) {
+        /*if(outputTotal == 0) {
             memset(output, 0, sizeof(output[0]) * outputNeuronCount);
             output[0] = 1.0;
         }
@@ -267,7 +268,7 @@ void rnnPropagate(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeu
                 output[n] /= outputTotal;
                 assert(output[n] >= 0.0 && output[n] <= 1.0);
             }
-        }
+        }*/
 
 
         // "pass on" new hidden state
@@ -359,8 +360,8 @@ void rnnPropagateWide(RecurrentNeuralNet** nn, const i32 nnCount, const Recurren
 
     const w128d bias = wide_f64_set1(def->bias);
     const w128d zero = wide_f64_zero();
-    const w128d ten = wide_f64_set1(10.0);
-    const w128d mten = wide_f64_set1(-10.0);
+    const w128d valmax = wide_f64_set1(10.0);
+    const w128d valmin = wide_f64_set1(-5.0);
     const i32 inputNeuronCountHalf = def->inputNeuronCount / 2;
     const i32 outputNeuronCountHalf = def->outputNeuronCount / 2;
     const i32 hiddenNeuronCountHalf = def->hiddenStateNeuronCount / 2;
@@ -398,7 +399,7 @@ void rnnPropagateWide(RecurrentNeuralNet** nn, const i32 nnCount, const Recurren
                                      );
             }
             value = wide_f64_add(value, bias); // bias
-            hiddenStateVals[n] = wide_f64_min(wide_f64_max(zero, value), ten); // activate
+            hiddenStateVals[n] = wide_f64_min(wide_f64_max(zero, value), valmax); // activate
 
             weights += inputNeuronCountHalf * 2;
             prevHiddenWeights += hiddenNeuronCountHalf * 2;
@@ -419,8 +420,8 @@ void rnnPropagateWide(RecurrentNeuralNet** nn, const i32 nnCount, const Recurren
             }
             value = wide_f64_add(value, bias); // bias
             // clamp -10.0, 10.0
-            value = wide_f64_max(value, mten);
-            value = wide_f64_min(value, ten);
+            value = wide_f64_max(value, valmin);
+            value = wide_f64_min(value, valmax);
             output[n] = wide_f64_exp1(value);
             outputTotal = wide_f64_add(outputTotal, wide_f64_hadd(output[n], zero));
 
@@ -500,6 +501,29 @@ i32 reinsertTruncateRNN(i32 maxBest, i32 nnCount, f64* fitness, RecurrentNeuralN
     return maxBest;
 }
 
+
+i32 reinsertTruncateRNNSpecies(i32 maxBest, i32 nnCount, f64* fitness, RecurrentNeuralNet** nextGen,
+                               RecurrentNeuralNet** curGen, RecurrentNeuralNetDef* def, u8* curSpecies,
+                               u8* nextSpecies)
+{
+    assert(nnCount < 2048);
+    FitnessPair list[2048];
+    for(i32 i = 0; i < nnCount; ++i) {
+        list[i].id = i;
+        list[i].fitness = fitness[i];
+    }
+
+    qsort(list, nnCount, sizeof(FitnessPair), compareFitness);
+
+    for(i32 i = 0; i < maxBest; ++i) {
+        memmove(nextGen[i], curGen[list[i].id], def->neuralNetSize);
+        nextSpecies[i] = curSpecies[list[i].id];
+    }
+
+    return maxBest;
+}
+
+
 void crossover(f64* outWeights, f64* parentBWeights, f64* parentAWeights, i32 weightCount)
 {
     for(i32 s = 0; s < weightCount; ++s) {
@@ -530,6 +554,29 @@ i32 selectTournament(const i32 reinsertCount, const i32 tournamentSize, i32 notT
 
     for(i32 i = 0; i < tournamentSize; ++i) {
         i32 opponent = selectRandom(reinsertCount, notThisId);
+        if(fitness[opponent] > championFitness) {
+            champion = opponent;
+            championFitness = fitness[opponent];
+        }
+    }
+
+    return champion;
+}
+
+i32 selectTournamentSpecies(const i32 count, i32 tries, i32 notThisId, const f64* fitness,
+                            const u8* speciesTags, const u8 thisTag)
+{
+    i32 champion = selectRandom(count, notThisId);
+    while(speciesTags[champion] != thisTag && tries--) {
+        champion = selectRandom(count, notThisId);
+    }
+
+    f32 championFitness = fitness[champion];
+    for(i32 i = 0; i < tries; ++i) {
+        i32 opponent = selectRandom(count, notThisId);
+        while(speciesTags[opponent] != thisTag && tries--) {
+            opponent = selectRandom(count, notThisId);
+        }
         if(fitness[opponent] > championFitness) {
             champion = opponent;
             championFitness = fitness[opponent];

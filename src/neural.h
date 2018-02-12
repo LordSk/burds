@@ -85,9 +85,14 @@ i32 reinsertTruncateNN(i32 maxBest, i32 nnCount, f64* fitness, NeuralNet** nextG
                        NeuralNet** curGen, NeuralNetDef* def);
 i32 reinsertTruncateRNN(i32 maxBest, i32 nnCount, f64* fitness, RecurrentNeuralNet** nextGen,
                         RecurrentNeuralNet** curGen, RecurrentNeuralNetDef* def);
+i32 reinsertTruncateRNNSpecies(i32 maxBest, i32 nnCount, f64* fitness, RecurrentNeuralNet** nextGen,
+                               RecurrentNeuralNet** curGen, RecurrentNeuralNetDef* def, u8* curSpecies,
+                               u8* nextSpecies);
 void crossover(f64* outWeights, f64* parentBWeights,
                f64* parentAWeights, i32 weightCount);
 i32 selectTournament(const i32 reinsertCount, const i32 tournamentSize, i32 notThisId, const f64* fitness);
+i32 selectTournamentSpecies(const i32 count, i32 tries, i32 notThisId, const f64* fitness,
+                            const u8* speciesTags, const u8 thisTag);
 i32 mutateNN(f32 rate, f32 factor, i32 nnCount, NeuralNet** nextGen, NeuralNetDef* def);
 i32 mutateRNN(f32 rate, f32 factor, i32 nnCount, RecurrentNeuralNet** nextGen, RecurrentNeuralNetDef* def);
 

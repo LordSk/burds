@@ -414,7 +414,7 @@ void drawSpriteBatch(i32 textureId, const Transform* transform, const Color3* co
     glDrawArraysInstanced(GL_TRIANGLES, 0, 6, count);
 }
 
-void drawLineBatch(const Line* lines, const i32 count)
+void drawLineBatch(const Line* lines, const i32 count, f32 lineThickness)
 {
     glBindBuffer(GL_ARRAY_BUFFER, state.vboPosColor);
     glBufferSubData(GL_ARRAY_BUFFER, 0, count * sizeof(Line), lines);
@@ -423,7 +423,11 @@ void drawLineBatch(const Line* lines, const i32 count)
 
     glUseProgram(state.shaderColor.program);
 
+    glLineWidth(lineThickness);
+
     glDrawArrays(GL_LINES, 0, count * 2);
+
+    glLineWidth(1.0f);
 }
 
 void drawQuadBatch(const Quad* quads, const i32 count)
