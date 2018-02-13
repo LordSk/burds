@@ -129,14 +129,18 @@ static void renderUI(ImDrawData* pDrawData)
     glViewport(last_viewport[0], last_viewport[1], (GLsizei)last_viewport[2], (GLsizei)last_viewport[3]);
 }
 
-ImGuiGLSetup* imguiInit(u32 width, u32 height)
+ImGuiGLSetup* imguiInit(u32 width, u32 height, const char* configFilename)
 {
     ImGuiGLSetup* ims = (ImGuiGLSetup*)malloc(sizeof(ImGuiGLSetup));
+
+    static char cfgPath[256];
+    i32 cfgPathLen = strlen(configFilename);
+    memmove(cfgPath, configFilename, cfgPathLen);
 
     ImGuiIO& io = ImGui::GetIO();
     io.DisplaySize.x = width;
     io.DisplaySize.y = height;
-    io.IniFilename = "imgui.ini";
+    io.IniFilename = cfgPath;
     io.RenderDrawListsFn = renderUI;
     io.UserData = ims;
 
@@ -380,39 +384,4 @@ void imguiHandleInput(ImGuiGLSetup* ims, SDL_Event event)
 void imguiRender()
 {
     ImGui::Render();
-}
-
-void imguiTestWindow()
-{
-    ImGui::ShowTestWindow();
-}
-
-void imguiBegin(const char* name)
-{
-    ImGui::Begin(name);
-}
-
-void imguiEnd()
-{
-    ImGui::End();
-}
-
-u8 imguiSliderFloat(const char* label, f32* v, f32 v_min, f32 v_max)
-{
-    return ImGui::SliderFloat(label, v, v_min, v_max);
-}
-
-u8 imguiSliderInt(const char* label, i32* v, i32 v_min, i32 v_max)
-{
-    return ImGui::SliderInt(label, v, v_min, v_max);
-}
-
-u8 imguiButton(const char* label)
-{
-    return ImGui::Button(label);
-}
-
-void imguiSameLine()
-{
-    ImGui::SameLine();
 }

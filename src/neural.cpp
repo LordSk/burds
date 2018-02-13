@@ -6,6 +6,9 @@
 #include <assert.h>
 #include <float.h>
 #include <stddef.h>
+#include "imgui/imgui.h"
+#define IMGUI_DEFINE_MATH_OPERATORS
+#include "imgui/imgui_internal.h"
 
 #define sigmoid(val) (1.0 / (1.0 + expf(-val)))
 #define activate(val) tanh(val)
@@ -464,7 +467,7 @@ static i32 compareFitness(const void* a, const void* b)
 }
 
 i32 reinsertTruncateNN(i32 maxBest, i32 nnCount, f64* fitness, NeuralNet** nextGen,
-                     NeuralNet** curGen, NeuralNetDef* def)
+                       NeuralNet** curGen, NeuralNetDef* def)
 {
     assert(nnCount < 2048);
     FitnessPair list[2048];
@@ -782,4 +785,55 @@ void testPropagateRNNWide()
     }
 
     rnnDealloc(nn[0]);
+}
+
+void ImGui_NeuralNet(NeuralNet* nn, NeuralNetDef* def)
+{
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (window->SkipItems)
+        return;
+
+    constexpr i32 cellsPerLine = 10;
+    const ImVec2 cellSize(10, 10);
+    i32 lines = def->neuronCount / cellsPerLine + 1;
+    ImVec2 size(cellsPerLine * cellSize.x, lines * cellSize.y);
+
+    ImVec2 pos = window->DC.CursorPos;
+    const ImRect bb(pos, pos + size);
+    ImGui::ItemSize(bb);
+
+    for(i32 i = 0; i < def->neuronCount; ++i) {
+        f32 w = clamp(nn->values[i] * 0.5, 0.0, 1.0);
+        u32 color = 0xff000000 | ((u8)(0xff*w) << 16)| ((u8)(0xff*w) << 8)| ((u8)(0xff*w));
+        i32 column = i % cellsPerLine;
+        i32 line = i / cellsPerLine;
+        ImVec2 offset(column * cellSize.x, line * cellSize.y);
+        ImGui::RenderFrame(pos + offset, pos + offset + cellSize, color, false, 0);
+    }
+}
+
+void ImGui_RecurrentNeuralNet(RecurrentNeuralNet* nn, RecurrentNeuralNetDef* def)
+{
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (window->SkipItems)
+        return;
+
+    constexpr i32 cellsPerLine = 14;
+    const ImVec2 cellSize(10, 10);
+    i32 lines = def->neuronCount / cellsPerLine + 1;
+    ImVec2 size(cellsPerLine * cellSize.x, lines * cellSize.y);
+
+    ImVec2 pos = window->DC.CursorPos;
+    const ImRect bb(pos, pos + size);
+    ImGui::ItemSize(bb);
+
+    for(i32 i = 0; i < def->neuronCount; ++i) {
+        i32 isNormalVal = i < (def->neuronCount - def->hiddenStateNeuronCount);
+        f32 w = clamp(nn->values[i] * 0.5, 0.0, 1.0);
+        u32 color = 0xff000000 | ((u8)(0xff*w) << 16)| ((u8)(0xff*w*isNormalVal) << 8)| ((u8)(0xff*w));
+        i32 column = i % cellsPerLine;
+        i32 line = i / cellsPerLine;
+        ImVec2 offset(column * cellSize.x, line * cellSize.y);
+        ImGui::RenderFrame(pos + offset, pos + offset + cellSize, color, false, 0);
+    }
 }

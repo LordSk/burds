@@ -79,9 +79,12 @@ project "burds_app"
 	configuration {}
 	
 	files {
-		"src/**.h",
-		"src/**.c",
-		"src/**.cpp",
+		"src/*.h",
+		"src/*.cpp",
+		"src/burds/*.h",
+		"src/burds/*.cpp",
+		"src/imgui/*.h",
+		"src/imgui/*.cpp",
 	}
 	
 	includedirs {

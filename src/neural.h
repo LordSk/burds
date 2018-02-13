@@ -99,3 +99,6 @@ i32 mutateRNN(f32 rate, f32 factor, i32 nnCount, RecurrentNeuralNet** nextGen, R
 void testPropagateNN();
 void testPropagateRNN();
 void testPropagateRNNWide();
+
+void ImGui_NeuralNet(NeuralNet* nn, NeuralNetDef* def);
+void ImGui_RecurrentNeuralNet(RecurrentNeuralNet* nn, RecurrentNeuralNetDef* def);
