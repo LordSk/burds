@@ -505,21 +505,28 @@ i32 reinsertTruncateRNN(i32 maxBest, i32 nnCount, f64* fitness, RecurrentNeuralN
 }
 
 
-i32 reinsertTruncateRNNSpecies(i32 maxBest, i32 nnCount, f64* fitness, RecurrentNeuralNet** nextGen,
-                               RecurrentNeuralNet** curGen, RecurrentNeuralNetDef* def, u8* curSpecies,
-                               u8* nextSpecies)
+i32 reinsertTruncateRNNSpecies(i32 maxBest, GeneticEnvRnn* env)
 {
-    assert(nnCount < 2048);
+    const i32 popCount = env->populationCount;
+    const f64* fitness = env->fitness;
+    RecurrentNeuralNet** curGen = env->curPopRNN;
+    RecurrentNeuralNet** nextGen = env->nextPopRNN;
+    const i32 nnSize = env->rnnDef->neuralNetSize;
+    u8* curSpecies = env->curSpeciesTags;
+    u8* nextSpecies = env->nextSpeciesTags;
+
+    assert(popCount < 2048);
     FitnessPair list[2048];
-    for(i32 i = 0; i < nnCount; ++i) {
+
+    for(i32 i = 0; i < popCount; ++i) {
         list[i].id = i;
         list[i].fitness = fitness[i];
     }
 
-    qsort(list, nnCount, sizeof(FitnessPair), compareFitness);
+    qsort(list, popCount, sizeof(FitnessPair), compareFitness);
 
     for(i32 i = 0; i < maxBest; ++i) {
-        memmove(nextGen[i], curGen[list[i].id], def->neuralNetSize);
+        memmove(nextGen[i], curGen[list[i].id], nnSize);
         nextSpecies[i] = curSpecies[list[i].id];
     }
 
@@ -543,9 +550,9 @@ void crossover(f64* outWeights, f64* parentBWeights, f64* parentAWeights, i32 we
 
 inline i32 selectRandom(const i32 reinsertCount, i32 notThisId)
 {
-    i32 r = xorshift64star() % reinsertCount;
+    i32 r = randi64(0, reinsertCount);
     while(r == notThisId) {
-        r = xorshift64star() % reinsertCount;
+        r = randi64(0, reinsertCount);
     }
     return r;
 }
@@ -575,11 +582,12 @@ i32 selectTournamentSpecies(const i32 count, i32 tries, i32 notThisId, const f64
     }
 
     f32 championFitness = fitness[champion];
-    for(i32 i = 0; i < tries; ++i) {
+    for(i32 i = 0; i < 15 && tries > 0; ++i) {
         i32 opponent = selectRandom(count, notThisId);
         while(speciesTags[opponent] != thisTag && tries--) {
             opponent = selectRandom(count, notThisId);
         }
+
         if(fitness[opponent] > championFitness) {
             champion = opponent;
             championFitness = fitness[opponent];
@@ -785,6 +793,13 @@ void testPropagateRNNWide()
     }
 
     rnnDealloc(nn[0]);
+}
+
+void generateSpeciesTags(u8* tags, const i32 tagCount, const i32 bitCount)
+{
+    for(i32 i = 0; i < tagCount; ++i) {
+        tags[i] = randf64(0, (1 << bitCount)-1);
+    }
 }
 
 void ImGui_NeuralNet(NeuralNet* nn, NeuralNetDef* def)

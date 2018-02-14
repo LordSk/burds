@@ -19,6 +19,8 @@
 #define FRAME_DT ((f64)(1.0/FRAMES_PER_SEC))
 
 #define BIRD_COUNT 1024
+#define BIRD_TAG_BITS 3
+constexpr i32 SUBPOP_MAX_COUNT = 1 << BIRD_TAG_BITS;
 
 #define BIRD_BODY_RATIO 0.5f
 #define BIRD_WING_RATIO 1.68125f
@@ -33,14 +35,14 @@
 #define FRICTION_AIR_ANGULAR 0.05f
 #define FRICTION_AIR 0.05f
 
-#define WING_STRENGTH 160.f
-#define WING_STRENGTH_ANGULAR (PI * 0.4f)
+#define WING_STRENGTH 5000.f
+#define WING_STRENGTH_ANGULAR (PI * 10.0)
 
 #define ANGULAR_VELOCITY_MAX (TAU * 2.0)
 
 #define APPLE_POS_LIST_COUNT 1024
 #define APPLE_RADIUS 80.0
-#define APPLE_HEALTH_BONUS 5.0
+#define HEALTH_MAX 10.0
 
 #define GROUND_Y 1000
 
@@ -48,18 +50,13 @@
 #define REINSERT_DUPLICATE 0x2
 #define REINSERT_STRATEGY REINSERT_TRUNCATE
 
-#define NEURAL_NET_LAYERS { 6, 8, 2 }
+#define NEURAL_NET_LAYERS { 4, 12, 4 }
 
 #define STATS_HISTORY_COUNT 30
 
-static f64 outMin1 = 1000.0;
-static f64 outMax1 = -1000.0;
-static f64 outMin2 = 1000.0;
-static f64 outMax2 = -1000.0;
-
 struct BirdInput
 {
-    u8 left, right;
+    u8 left, right, flapLight, flapHard, brakeLight, brakeHard;
 };
 
 enum {
@@ -68,7 +65,7 @@ enum {
 };
 
 struct Bounds {
-    f64 worst, best;
+    f64 bmin, bmax;
 };
 
 struct App {
@@ -84,7 +81,7 @@ i32 tex_apple;
 Transform birdBodyTf[BIRD_COUNT];
 Transform birdLeftWingTf[BIRD_COUNT];
 Transform birdRightWingTf[BIRD_COUNT];
-Color3 birdColor[BIRD_COUNT];
+Color3 speciesColor[SUBPOP_MAX_COUNT];
 
 Vec2 birdPos[BIRD_COUNT];
 Vec2 birdVel[BIRD_COUNT];
@@ -106,8 +103,8 @@ Line targetLine[BIRD_COUNT];
 RecurrentNeuralNetDef nnDef;
 RecurrentNeuralNet* curGenNN[BIRD_COUNT];
 RecurrentNeuralNet* nextGenNN[BIRD_COUNT];
-u8 curSpecies[BIRD_COUNT];
-u8 nextSpecies[BIRD_COUNT];
+u8 curSpeciesTag[BIRD_COUNT];
+u8 nextSpeciesTag[BIRD_COUNT];
 
 i32 birdAppleEatenCount[BIRD_COUNT];
 f32 birdShortestDistToNextApple[BIRD_COUNT];
@@ -134,9 +131,8 @@ i32 mode;
 struct ImGuiGLSetup* ims;
 
 i32 timeScale;
-i32 inputStackTop;
 
-i32 dbgViewerBirdId;
+i32 dbgViewerBirdId = 0;
 
 struct GenerationStats {
     i32 number = 0;
@@ -149,25 +145,27 @@ GenerationStats curGenStats;
 GenerationStats lastGenStats;
 GenerationStats pastGenStats[STATS_HISTORY_COUNT];
 
+Bounds outBounds[4];
+
+GeneticEnvRnn genetivEnv = { BIRD_COUNT, BIRD_TAG_BITS, curSpeciesTag, nextSpeciesTag,
+                         curGenNN, nextGenNN, &nnDef, birdFitness };
+
 void resetBirdColors()
 {
     const u32 colorMax = 0xFF;
     const u32 colorMin = 0x0;
-    const u32 colorDelta = colorMax - colorMin;
 
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+    for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
         Color3 c;
-        c.r = (xorshift64star() % colorDelta) + colorMin;
-        c.g = (xorshift64star() % colorDelta) + colorMin;
-        c.b = (xorshift64star() % colorDelta) + colorMin;
-        birdColor[i] = c;
+        c.r = randi64(colorMin, colorMax);
+        c.g = randi64(colorMin, colorMax);
+        c.b = randi64(colorMin, colorMax);
+        speciesColor[i] = c;
     }
 }
 
 void resetBirds()
 {
-    resetBirdColors();
-
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         birdPos[i].x = 0;
         birdPos[i].y = GROUND_Y-100;
@@ -198,7 +196,7 @@ void resetBirds()
     }
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        birdHealth[i] = APPLE_HEALTH_BONUS; // seconds
+        birdHealth[i] = HEALTH_MAX; // seconds
     }
 
     memset(birdVel, 0, sizeof(birdVel));
@@ -211,6 +209,7 @@ void resetBirds()
     memset(birdDistToNextAppleSum, 0, sizeof(birdDistToNextAppleSum));
     memset(birdDistCheckCount, 0, sizeof(birdDistCheckCount));
     memset(birdDead, 0, sizeof(birdDead));
+    memset(birdFitness, 0, sizeof(birdFitness));
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         //birdRot[i] = PI;
@@ -226,16 +225,11 @@ void resetBirds()
     }
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        memmove(&targetLine[i].c1, &birdColor[i], 3);
+        memmove(&targetLine[i].c1, &speciesColor[i], 3);
         targetLine[i].c1.a = 128;
-        memmove(&targetLine[i].c2, &birdColor[i], 3);
+        memmove(&targetLine[i].c2, &speciesColor[i], 3);
         targetLine[i].c2.a = 0;
     }
-
-    outMin1 = 1000.0;
-    outMax1 = -1000.0;
-    outMin2 = 1000.0;
-    outMax2 = -1000.0;
 
     Bounds minb = {DBL_MAX, -DBL_MAX};
     genFitness = minb;
@@ -244,14 +238,17 @@ void resetBirds()
     genLongDistFactor = minb;
     genHealthFactor = minb;
 
-    inputStackTop = 0;
+    outBounds[0] = minb;
+    outBounds[1] = minb;
+    outBounds[2] = minb;
+    outBounds[3] = minb;
 }
 
 void resetApplePath()
 {
     i32 spawnOriginX = 0;
     i32 spawnOriginY = 0;
-    const i32 spawnRadius = 1000;
+    const i32 spawnRadius = 1500;
 
     for(i32 i = 0; i < APPLE_POS_LIST_COUNT; ++i) {
         applePosList[i].x = spawnOriginX - spawnRadius + randi64(0, spawnRadius* 2);
@@ -266,11 +263,25 @@ void resetApplePath()
 
 void resetSimulation()
 {
+    //generateSpeciesTags(curSpeciesTag, BIRD_COUNT, BIRD_TAG_BITS);
+    resetBirdColors();
     resetBirds();
     resetApplePath();
 
-    rnnInitRandom(curGenNN, BIRD_COUNT, &nnDef);
     generationNumber = 0;
+    curGenStats = {};
+    rnnInitRandom(curGenNN, BIRD_COUNT, &nnDef);
+
+    const i32 weightTotalCount = nnDef.weightTotalCount;
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        f64 sum = 0.0;
+        for(i32 w = 0; w < weightTotalCount; ++w) {
+            sum += curGenNN[i]->weights[w];
+        }
+        sum *= sum;
+        sum *= 1000.0;
+        curSpeciesTag[i] = ((u32)sum) & ((1 << BIRD_TAG_BITS) - 1);
+    }
 }
 
 i32 init()
@@ -280,10 +291,10 @@ i32 init()
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
 
     window = SDL_CreateWindow("Burds",
-                                  SDL_WINDOWPOS_CENTERED,
-                                  SDL_WINDOWPOS_CENTERED,
-                                  WINDOW_WIDTH, WINDOW_HEIGHT,
-                                  SDL_WINDOW_OPENGL);
+                              SDL_WINDOWPOS_CENTERED,
+                              SDL_WINDOWPOS_CENTERED,
+                              WINDOW_WIDTH, WINDOW_HEIGHT,
+                              SDL_WINDOW_OPENGL);
     running = TRUE;
 
     if(!window) {
@@ -457,7 +468,7 @@ void ImGui_BirdImage(i32 birdId, f32 height)
     ImVec2 wingSize(size.x / 2, (1.f / BIRD_WING_RATIO * size.x / 2));
     ImVec2 wingPos(pos.x + size.x / 2, pos.y + size.y / 2 - wingSize.y * 0.6f);
 
-    Color3 bc = birdColor[birdId];
+    Color3 bc = speciesColor[curSpeciesTag[birdId]];
     u32 col = ImGui::ColorConvertFloat4ToU32(ImVec4(bc.r / 255.f, bc.g / 255.f, bc.b / 255.f, 1.0f));
 
     drawList->AddImage((ImTextureID)(intptr_t)tex_birdWing, wingPos - ImVec2(wingSize.x,0),
@@ -467,6 +478,19 @@ void ImGui_BirdImage(i32 birdId, f32 height)
                        ImVec2(0,0), ImVec2(1,1), col);
     drawList->AddImage((ImTextureID)(intptr_t)tex_birdBody, bodyPos, bodyPos + bodySize,
                        ImVec2(0,0), ImVec2(1,1), col);
+}
+
+void ImGui_ColoredRect(const ImVec2& size, const ImVec4& color)
+{
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (window->SkipItems)
+        return;
+
+    ImVec2 pos = window->DC.CursorPos;
+    const ImRect bb(pos, pos + size);
+    ImGui::ItemSize(bb);
+
+    ImGui::RenderFrame(bb.Min, bb.Max, ImGui::ColorConvertFloat4ToU32(color), false, 0);
 }
 
 void ui_birdViewer()
@@ -499,10 +523,7 @@ void ui_birdViewer()
         }
     }
 
-    ImVec4 birdColor(birdColor[dbgViewerBirdId].r/255.f, birdColor[dbgViewerBirdId].g/255.f,
-                   birdColor[dbgViewerBirdId].b/255.f, 1);
-
-    ImGui::Text("Bird_%d", dbgViewerBirdId);
+    ImGui::Text("Bird_%04d [%03X]", dbgViewerBirdId, curSpeciesTag[dbgViewerBirdId]);
     ImGui::TextColored(ImVec4(0, 1, 0, 1), "fitness: %g", birdFitness[dbgViewerBirdId]);
 
     ImGui::Separator();
@@ -511,11 +532,26 @@ void ui_birdViewer()
 
     ImGui::Separator();
 
+    ImGui::TextUnformatted("Input");
+    f32 left = birdInput[dbgViewerBirdId].left;
+    f32 right = birdInput[dbgViewerBirdId].right;
+    ImGui_ColoredRect(ImVec2(20,20), ImVec4(left, right, 0, 1));
+    ImGui::SameLine();
+
+    f32 flap = (birdInput[dbgViewerBirdId].flapHard ? 2:birdInput[dbgViewerBirdId].flapLight) * 0.5;
+    ImGui_ColoredRect(ImVec2(20,20), ImVec4(0, flap, flap, 1));
+    ImGui::SameLine();
+
+    f32 brake = (birdInput[dbgViewerBirdId].brakeHard ? 2:birdInput[dbgViewerBirdId].brakeLight) * 0.5;
+    ImGui_ColoredRect(ImVec2(20,20), ImVec4(brake, 0, 0, 1));
+
+    ImGui::Separator();
+
     ImGui_BirdImage(dbgViewerBirdId, 100.f);
 
     ImGui::Separator();
 
-    ImGui::ProgressBar(birdHealth[dbgViewerBirdId]/APPLE_HEALTH_BONUS);
+    ImGui::ProgressBar(birdHealth[dbgViewerBirdId]/HEALTH_MAX);
 
     ImGui::End();
 }
@@ -551,6 +587,74 @@ void ui_generationViewer()
     ImGui::End();
 }
 
+void ui_subPopulations()
+{
+    f64 totalFitness[SUBPOP_MAX_COUNT] = {0};
+    f64 maxFitness[SUBPOP_MAX_COUNT] = {0};
+    f64 avgFitness[SUBPOP_MAX_COUNT] = {0};
+    i32 subPopIndivCount[SUBPOP_MAX_COUNT] = {0};
+    f64 maxTotal = 0;
+    f64 maxMaxFitness = 0;
+    f64 maxAvg = 0;
+    i32 maxCount = 0;
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        maxFitness[curSpeciesTag[i]] = max(birdFitness[i], maxFitness[curSpeciesTag[i]]);
+        totalFitness[curSpeciesTag[i]] += birdFitness[i];
+        subPopIndivCount[curSpeciesTag[i]]++;
+    }
+    for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
+        maxTotal = max(totalFitness[i], maxTotal);
+        maxMaxFitness = max(maxFitness[i], maxMaxFitness);
+        avgFitness[i] = totalFitness[i]/subPopIndivCount[i];
+        maxAvg = max(avgFitness[i], maxAvg);
+        maxCount = max(subPopIndivCount[i], maxCount);
+    }
+
+    ImVec4 subPopColors[SUBPOP_MAX_COUNT];
+    for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
+        Color3 sc = speciesColor[i];
+        subPopColors[i] = ImVec4(sc.r/255.f, sc.g/255.f, sc.b/255.f, 1.f);
+    }
+
+    ImGui::Begin("Sub populations");
+
+    if(ImGui::CollapsingHeader("Population count")) {
+        for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, subPopColors[i]);
+            char buff[64];
+            sprintf(buff, "%d", subPopIndivCount[i]);
+            ImGui::ProgressBar(subPopIndivCount[i]/(f32)maxCount, ImVec2(-1,0), buff);
+            ImGui::PopStyleColor(1);
+        }
+    }
+
+    if(ImGui::CollapsingHeader("Total fitness")) {
+        for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, subPopColors[i]);
+            ImGui::ProgressBar(totalFitness[i]/maxTotal);
+            ImGui::PopStyleColor(1);
+        }
+    }
+
+    if(ImGui::CollapsingHeader("Average fitness")) {
+        for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, subPopColors[i]);
+            ImGui::ProgressBar(avgFitness[i]/maxAvg);
+            ImGui::PopStyleColor(1);
+        }
+    }
+
+    if(ImGui::CollapsingHeader("Max fitness")) {
+        for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, subPopColors[i]);
+            ImGui::ProgressBar(maxFitness[i]/maxMaxFitness);
+            ImGui::PopStyleColor(1);
+        }
+    }
+
+    ImGui::End();
+}
+
 void doUI()
 {
     ImGui::StyleColorsDark();
@@ -563,6 +667,7 @@ void doUI()
 
     ui_birdViewer();
     ui_generationViewer();
+    ui_subPopulations();
 }
 
 
@@ -578,6 +683,7 @@ void updateNNs()
         f64 rot = birdRot[i];
         f64 angVel = birdAngularVel[i];
 
+#if 0
         curGenNN[i]->values[0] = appleOffsetX / 10000.0;
         curGenNN[i]->values[1] = appleOffsetY / 10000.0;
         curGenNN[i]->values[2] = velX / 1000.0;
@@ -585,22 +691,36 @@ void updateNNs()
         curGenNN[i]->values[4] = rot / TAU;
         // 5 rotations per second is propably high enough
         curGenNN[i]->values[5] = angVel / (TAU * 5.0);
+#endif
+
+        Vec2 diff = vec2Minus(&applePos, &birdPos[i]);
+        Vec2 dir = {cosf(rot), sinf(rot)};
+        f32 diffRot = vec2AngleBetween(&dir, &diff);
+        curGenNN[i]->values[0] = diffRot / PI;
+        curGenNN[i]->values[1] = velX / 1000.0;
+        curGenNN[i]->values[2] = velY / 1000.0;
+        curGenNN[i]->values[3] = vec2Len(&diff) / 3000.0;
     }
 
-    //rnnPropagate(curGenNN, BIRD_COUNT, &nnDef);
-    rnnPropagateWide(curGenNN, BIRD_COUNT, &nnDef);
+    rnnPropagate(curGenNN, BIRD_COUNT, &nnDef);
+    //rnnPropagateWide(curGenNN, BIRD_COUNT, &nnDef);
 
     // get neural net output
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        if(birdDead[i]) continue;
         f64* output = curGenNN[i]->output;
-        birdInput[i].left = output[0] > 0.8;
-        birdInput[i].right = output[1] > 0.8;
-    }
+        birdInput[i].left = output[0] > 0.5;
+        birdInput[i].right = output[1] > 0.5;
 
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        if(birdDead[i]) {
-            birdInput[i].left = 0;
-            birdInput[i].right = 0;
+        birdInput[i].flapLight = output[2] > 0.33 && output[2] <= 0.66;
+        birdInput[i].flapHard = output[2] > 0.66;
+
+        birdInput[i].brakeLight = output[3] > 0.33 && output[3] <= 0.66;
+        birdInput[i].brakeHard = output[3] > 0.66;
+
+        for(i32 o = 0; o < 4; ++o) {
+            outBounds[o].bmin = min(outBounds[o].bmin, output[o]);
+            outBounds[o].bmax = max(outBounds[o].bmax, output[o]);
         }
     }
 }
@@ -627,7 +747,7 @@ void updateMechanics()
         if(vec2Distance(applePos, &birdPos[i]) < APPLE_RADIUS) {
             birdApplePositionId[i]++;
             birdAppleEatenCount[i]++;
-            birdHealth[i] += APPLE_HEALTH_BONUS;
+            birdHealth[i] = HEALTH_MAX;
             birdShortestDistToNextApple[i] = vec2Distance(&applePosList[birdApplePositionId[i]],
                     &birdPos[i]);
             birdLongestDistToNextApple[i] = birdShortestDistToNextApple[i];
@@ -667,35 +787,26 @@ void updateMechanics()
         f64 longDistFactor = birdLongestDistToNextApple[i] / 5000.0; // 0.0 -> inf
         f64 deathDistFactor = APPLE_RADIUS * 1000.0 / vec2Distance(&birdPos[i],
                               &appleTf[i].pos); // 0.0 -> 1.0
-        f64 healthFactor = birdMaxHealthAchieved[i] / APPLE_HEALTH_BONUS - 1.0f;
+        f64 distFactor = APPLE_RADIUS / vec2Distance(&birdPos[i], &appleTf[i].pos); // 0.0 -> 1.0
+        f64 healthFactor = birdMaxHealthAchieved[i] / HEALTH_MAX - 1.0f;
         f64 avgDistFactor = (birdDistToNextAppleSum[i] / birdDistCheckCount[i]) /
                             5000.0;
 
-        /*if(birdShortestDistToNextApple[i] > 2500.0) {
-            shortDistFactor = (birdShortestDistToNextApple[i] - 2500.0) / -2500.0;
-        }*/
+        //birdFitness[i] += applesFactor * 2.0 + (distFactor * distFactor * distFactor);
+        birdFitness[i] += applesFactor * 2.0 + distFactor * shortDistFactor;
+        /*birdFitness[i] += applesFactor * 2.0 + distFactor * 0.2 +
+                (1.0 - birdHealth[i]/HEALTH_MAX) * distFactor;*/
 
-        /*if(applesFactor == 0) {
-            deathDistFactor = 0;
-        }*/
-
-        /*birdFitness[i] = applesFactor * 4.0 +
-                             shortDistFactor +
-                             deathDistFactor;*/
-
-        birdFitness[i] = applesFactor * 2000.0 + deathDistFactor;
-        //birdFitness[i] = applesFactor * 2.0 + shortDistFactor;
-
-        genFitness.worst = min(genFitness.worst, birdFitness[i]);
-        genFitness.best = max(genFitness.best, birdFitness[i]);
-        genAvgDistFactor.worst = min(genAvgDistFactor.worst, avgDistFactor);
-        genAvgDistFactor.best = max(genAvgDistFactor.best, avgDistFactor);
-        genShortDistFactor.worst = min(genShortDistFactor.worst, shortDistFactor);
-        genShortDistFactor.best = max(genShortDistFactor.best, shortDistFactor);
-        genLongDistFactor.worst = min(genLongDistFactor.worst, longDistFactor);
-        genLongDistFactor.best = max(genLongDistFactor.best, longDistFactor);
-        genHealthFactor.worst = min(genHealthFactor.worst, healthFactor);
-        genHealthFactor.best = max(genHealthFactor.best, healthFactor);
+        genFitness.bmin = min(genFitness.bmin, birdFitness[i]);
+        genFitness.bmax = max(genFitness.bmax, birdFitness[i]);
+        genAvgDistFactor.bmin = min(genAvgDistFactor.bmin, avgDistFactor);
+        genAvgDistFactor.bmax = max(genAvgDistFactor.bmax, avgDistFactor);
+        genShortDistFactor.bmin = min(genShortDistFactor.bmin, shortDistFactor);
+        genShortDistFactor.bmax = max(genShortDistFactor.bmax, shortDistFactor);
+        genLongDistFactor.bmin = min(genLongDistFactor.bmin, longDistFactor);
+        genLongDistFactor.bmax = max(genLongDistFactor.bmax, longDistFactor);
+        genHealthFactor.bmin = min(genHealthFactor.bmin, healthFactor);
+        genHealthFactor.bmax = max(genHealthFactor.bmax, healthFactor);
     }
 
     f64 maxFitness = 0.0;
@@ -726,6 +837,7 @@ void updateMechanics()
 
 void updatePhysics()
 {
+#if 0
     // apply bird input
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         u8 flapLeft = (birdFlapLeftCd[i] <= 0.0f) && birdInput[i].left;
@@ -784,14 +896,57 @@ void updatePhysics()
             birdFlapRightCd[i] = WING_FLAP_TIME;
         }
     }
+#endif
 
-    const f32 gravity = 200.f;
+    constexpr f32 gravity = 200.f;
+
+    // apply bird input
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        if(birdDead[i]) continue;
+        u8 rotLeft = birdInput[i].left;
+        u8 rotRight = birdInput[i].right;
+        u8 flap = 0;
+        if(birdFlapLeftCd[i] <= 0.0f) {
+            if(birdInput[i].flapHard) {
+                flap = 2;
+            }
+            else if(birdInput[i].flapLight) {
+                flap = 1;
+            }
+        }
+        u8 brake = 0;
+        if(birdInput[i].brakeHard) {
+            brake = 2;
+        }
+        else if(birdInput[i].brakeLight) {
+            brake = 1;
+        }
+
+        birdRot[i] += rotRight * WING_STRENGTH_ANGULAR * FRAME_DT +
+                      rotLeft  * -WING_STRENGTH_ANGULAR * FRAME_DT;
+
+        if(brake) {
+            birdVel[i].x *= 1.0 - 5.0 * brake * FRAME_DT;
+            birdVel[i].y *= 1.0 - 5.0 * brake * FRAME_DT;
+        }
+        else {
+            if(flap) {
+                Vec2 force = {(f32)(cosf(birdRot[i]) * WING_STRENGTH * FRAME_DT * flap),
+                              (f32)(sinf(birdRot[i]) * WING_STRENGTH * FRAME_DT * flap)};
+
+                birdVel[i].x += force.x;
+                birdVel[i].y += force.y;
+                birdFlapLeftCd[i] = WING_FLAP_TIME;
+                birdFlapRightCd[i] = WING_FLAP_TIME;
+            }
+        }
+    }
 
     // apply gravity and friction to bird velocity
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         birdVel[i].y += gravity * FRAME_DT;
-        birdVel[i].y *= 1.f - FRICTION_AIR * FRAME_DT;
-        birdVel[i].x *= 1.f - FRICTION_AIR * FRAME_DT;
+        /*birdVel[i].y *= 1.f - FRICTION_AIR * FRAME_DT;
+        birdVel[i].x *= 1.f - FRICTION_AIR * FRAME_DT;*/
     }
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         if(birdAngularVel[i] > ANGULAR_VELOCITY_MAX) birdAngularVel[i] = ANGULAR_VELOCITY_MAX;
@@ -805,7 +960,7 @@ void updatePhysics()
         birdPos[i].y += birdVel[i].y * FRAME_DT;
     }
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        birdRot[i] += birdAngularVel[i] * FRAME_DT;
+        //birdRot[i] += birdAngularVel[i] * FRAME_DT;
         if(birdRot[i] > TAU) birdRot[i] -= TAU;
         else if(birdRot[i] < TAU) birdRot[i] += TAU;
     }
@@ -832,8 +987,50 @@ void updateCamera()
     setView(viewX, viewY, WINDOW_WIDTH*viewZoom, WINDOW_HEIGHT*viewZoom);
 }
 
+struct FitnessPair
+{
+    i32 id;
+    f64 fitness;
+};
+
+static i32 compareFitnessDesc(const void* a, const void* b)
+{
+    const FitnessPair* fa = (FitnessPair*)a;
+    const FitnessPair* fb = (FitnessPair*)b;
+    if(fa->fitness > fb->fitness) return -1;
+    if(fa->fitness < fb->fitness) return 1;
+    return 0;
+}
+
+static i32 compareFitnessAsc(const void* a, const void* b)
+{
+    const FitnessPair* fa = (FitnessPair*)a;
+    const FitnessPair* fb = (FitnessPair*)b;
+    if(fa->fitness < fb->fitness) return -1;
+    if(fa->fitness > fb->fitness) return 1;
+    return 0;
+}
+
+i32 selectRoulette(const i32 count, f64* fitness, f64 totalFitness)
+{
+    f64 r = randf64(0.0, totalFitness);
+    f64 s = 0.0;
+    for(i32 j = 0; j < count; ++j) {
+        s += fitness[j];
+        if(r < s) {
+            return j;
+        }
+    }
+    assert(0);
+    return -1;
+}
+
 void nextGeneration()
 {
+    for(i32 o = 0; o < 4; ++o) {
+        LOG("output[%d] min=%g max=%g", o, outBounds[o].bmin, outBounds[o].bmax);
+    }
+
     lastGenStats = curGenStats;
     memmove(pastGenStats, pastGenStats+1, sizeof(pastGenStats) - sizeof(pastGenStats[0]));
     pastGenStats[STATS_HISTORY_COUNT-1] = lastGenStats;
@@ -846,35 +1043,52 @@ void nextGeneration()
     //LOG("out1[%.3f, %.3f] out1[%.3f, %.3f]", outMin1, outMax1, outMin2, outMax2);
     LOG("fitness=[%.5f, %.5f] shortDist=[%.5f, %.5f] avgDist=[%.5f, %.5f] longDist=[%.5f, %.5f]"
         " health=[%.5f, %.5f]",
-        genFitness.worst, genFitness.best,
-        genShortDistFactor.worst, genShortDistFactor.best,
-        genAvgDistFactor.worst, genAvgDistFactor.best,
-        genLongDistFactor.worst, genLongDistFactor.best,
-        genHealthFactor.worst, genHealthFactor.best
+        genFitness.bmin, genFitness.bmax,
+        genShortDistFactor.bmin, genShortDistFactor.bmax,
+        genAvgDistFactor.bmin, genAvgDistFactor.bmax,
+        genLongDistFactor.bmin, genLongDistFactor.bmax,
+        genHealthFactor.bmin, genHealthFactor.bmax
         );
 
-    i32 reinsertCount = reinsertTruncateRNN(BIRD_COUNT*0.1, BIRD_COUNT, birdFitness, nextGenNN,
-                                            curGenNN, &nnDef);
+#if 0
+    i32 reinsertCount = reinsertTruncateRNNSpecies(BIRD_COUNT*0.1, &genetivEnv);
 
     const i32 tournamentSize = 15;
     LOG("tournamentSize=%d", tournamentSize);
 
+    i32 crossoverMisses = 0;
     // cross over
     for(i32 i = reinsertCount; i < BIRD_COUNT; ++i) {
         i32 parentA = selectTournament(BIRD_COUNT, tournamentSize, -1, birdFitness);
-        i32 parentB = selectTournament(BIRD_COUNT, tournamentSize, parentA, birdFitness);
+        const u8 parentATag = curSpeciesTag[parentA];
+        i32 parentB = selectTournamentSpecies(BIRD_COUNT, 3000, parentA, birdFitness, curSpeciesTag,
+                                              parentATag);
         crossover(nextGenNN[i]->weights, curGenNN[parentA]->weights, curGenNN[parentB]->weights,
                   nnDef.weightTotalCount);
+        if(curSpeciesTag[parentB] != parentATag) {
+            crossoverMisses++;
+        }
+        nextSpeciesTag[i] = curSpeciesTag[parentB];
     }
+
+    LOG("crossover misses: %d", crossoverMisses);
 
     // mutate
     const f32 mutationRate = 0.005f;
     i32 mutationCount = 0;
-    for(i32 i = 1; i < BIRD_COUNT; ++i) {
-        //f64 mutationFactor = 0.1 + ((f64)i/BIRD_COUNT) * 0.9;
-        //f64 mutationFactor = (f64)i/BIRD_COUNT * 0.5;
-        f64 mutationFactor = 0.5;
 
+    for(i32 i = 0; i < reinsertCount; ++i) {
+        f64 mutationFactor = (f64)i/BIRD_COUNT * 0.5;
+        for(i32 s = 0; s < nnDef.weightTotalCount; ++s) {
+            // mutate
+            if(randf64(0.0, 1.0) < mutationRate) {
+                mutationCount++;
+                nextGenNN[i]->weights[s] += randf64(-mutationFactor, mutationFactor);
+            }
+        }
+    }
+    for(i32 i = reinsertCount; i < BIRD_COUNT; ++i) {
+        f64 mutationFactor = 0.5;
         for(i32 s = 0; s < nnDef.weightTotalCount; ++s) {
             // mutate
             if(randf64(0.0, 1.0) < mutationRate) {
@@ -884,9 +1098,214 @@ void nextGeneration()
         }
     }
 
-    LOG("mutationRate=%g mutationCount=%d", mutationRate, mutationCount);
+    const f32 mutationTagRate = 0.02f;
+    i32 tagMutations = 0;
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        f64 rate = (f64)i/BIRD_COUNT * mutationTagRate;
+        if(randf64(0.0, 1.0) < rate) {
+            tagMutations++;
+            i32 bit = randi64(0, BIRD_TAG_BITS-1);
+            nextSpeciesTag[i] ^= 1 << bit;
+        }
+    }
+
+    LOG("mutationRate=%g mutationCount=%d tagMutations=%d", mutationRate, mutationCount, tagMutations);
+#endif
+    i32 subPopIndivCount[SUBPOP_MAX_COUNT] = {0};
+    i32 subPopCount = 0;
+    f64 normFitness[BIRD_COUNT];
+    constexpr i32 parentCount = BIRD_COUNT * 0.3;
+    i32 parents[parentCount];
+
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        u8 tag = curSpeciesTag[i];
+        if(subPopIndivCount[tag] == 0) {
+            subPopCount++;
+        }
+        subPopIndivCount[tag]++;
+    }
+
+    // fitness sharing
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        normFitness[i] = birdFitness[i] / subPopIndivCount[curSpeciesTag[i]];
+    }
+
+    /*for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        normFitness[i] = birdFitness[i];
+    }*/
+
+    // reinsert
+    /*const i32 reinsertCount = subPopCount;
+    FitnessPair fpList[BIRD_COUNT];
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        fpList[i].id = i;
+        fpList[i].fitness = birdFitness[i];
+    }
+    qsort(fpList, BIRD_COUNT, sizeof(FitnessPair), compareFitness);
+
+    for(i32 i = 0; i < reinsertCount; ++i) {
+        i32 id = fpList[i].id;
+        memmove(nextGenNN[i], curGenNN[id], nnDef.neuralNetSize);
+        nextSpeciesTag[i] = curSpeciesTag[id];
+    }*/
+
+#if 0
+    // select parents (tournament)
+    u8 chosenAsParent[BIRD_COUNT] = {0};
+    const i32 tournamentSize = 20;
+
+    for(i32 i = 0; i < parentCount; ++i) {
+        i32 champion = randi64(0, BIRD_COUNT-1);
+        while(chosenAsParent[champion]) {
+            champion = randi64(0, BIRD_COUNT-1);
+        }
+        f64 championFitness = normFitness[champion];
+
+        for(i32 t = 0; t < tournamentSize; ++t) {
+            i32 opponent = randi64(0, BIRD_COUNT-1);
+            while(chosenAsParent[opponent]) {
+                opponent = randi64(0, BIRD_COUNT-1);
+            }
+            if(normFitness[opponent] > championFitness) {
+                champion = opponent;
+                championFitness = normFitness[opponent];
+            }
+        }
+
+        parents[i] = champion;
+        chosenAsParent[champion] = 1;
+    }
+#else
+
+    f64 totalFitness = 0.0;
+    // select parents (roulette wheel)
+    FitnessPair fpList[BIRD_COUNT];
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        fpList[i].id = i;
+        fpList[i].fitness = normFitness[i];
+        totalFitness += normFitness[i];
+    }
+    qsort(fpList, BIRD_COUNT, sizeof(FitnessPair), compareFitnessAsc);
+
+    u8 chosenAsParent[BIRD_COUNT] = {0};
+    for(i32 p = 0; p < parentCount; ++p) {
+        i32 tries = 100;
+        bool found = false;
+        while(tries-- && !found) {
+            f64 r = randf64(0, totalFitness);
+            // find where we ended up
+            f64 s = 0.0;
+            for(i32 j = 0; j < BIRD_COUNT; ++j) {
+                s += normFitness[j];
+                if(r < s) {
+                    if(!chosenAsParent[j]) {
+                        parents[p] = j;
+                        chosenAsParent[j] = 1;
+                        found = true;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+#endif
+
+    // restricted mating
+#if 1
+    i32 noMatesFoundCount = 0;
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        const i32 parentA = randi64(0, parentCount-1);
+        const i32 idA = parents[parentA];
+        const u8 tagA = curSpeciesTag[idA];
+
+        // find same sub pop mates
+        RecurrentNeuralNet* potentialMates[parentCount];
+        f64 pmFitness[parentCount];
+        i32 potentialMatesCount = 0;
+        i32 pmTotalFitness = 0.0;
+        for(i32 j = 0; j < parentCount; ++j) {
+            i32 idB = parents[j];
+            if(parentA != j && tagA == curSpeciesTag[idB]) {
+                i32 pmId = potentialMatesCount++;
+                potentialMates[pmId] = curGenNN[idB];
+                pmFitness[pmId] = normFitness[idB];
+                pmTotalFitness += pmFitness[pmId];
+            }
+        }
+
+        if(potentialMatesCount < 1) {
+            noMatesFoundCount++;
+            memmove(nextGenNN[i], curGenNN[idA], nnDef.neuralNetSize);
+            nextSpeciesTag[i] = tagA;
+        }
+        else {
+            RecurrentNeuralNet* mateA = curGenNN[idA];
+            i32 mateBId = selectRoulette(potentialMatesCount, pmFitness, pmTotalFitness);
+            RecurrentNeuralNet* mateB = potentialMates[mateBId];
+            crossover(nextGenNN[i]->weights, mateA->weights, mateB->weights, nnDef.weightTotalCount);
+            nextSpeciesTag[i] = tagA;
+        }
+    }
+#else
+    i32 noMatesFoundCount = 0;
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        const i32 parentA = selectTournament(BIRD_COUNT, 15, -1, normFitness);
+        const u8 tagA = curSpeciesTag[parentA];
+
+        // find same sub pop mates
+        RecurrentNeuralNet* potentialMates[BIRD_COUNT];
+        i32 potentialMatesCount = 0;
+        for(i32 j = 0; j < BIRD_COUNT; ++j) {
+            if(parentA != j && tagA == curSpeciesTag[j]) {
+                potentialMates[potentialMatesCount++] = curGenNN[j];
+            }
+        }
+
+        if(potentialMatesCount < 1) {
+            noMatesFoundCount++;
+            memmove(nextGenNN[i], curGenNN[parentA], nnDef.neuralNetSize);
+            nextSpeciesTag[i] = tagA;
+        }
+        else {
+            RecurrentNeuralNet* mateA = curGenNN[parentA];
+            RecurrentNeuralNet* mateB = potentialMates[randi64(0, potentialMatesCount-1)];
+            crossover(nextGenNN[i]->weights, mateA->weights, mateB->weights, nnDef.weightTotalCount);
+            nextSpeciesTag[i] = tagA;
+        }
+    }
+#endif
+
+    LOG("noMatesFoundCount=%d", noMatesFoundCount);
+
+    // mutate
+    const f32 mutationRate = 0.005f;
+    i32 mutationCount = 0;
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        f64 mutationFactor = ((f64)i/BIRD_COUNT) * 0.5;
+        for(i32 s = 0; s < nnDef.weightTotalCount; ++s) {
+            if(randf64(0.0, 1.0) < mutationRate) {
+                mutationCount++;
+                nextGenNN[i]->weights[s] += randf64(-mutationFactor, mutationFactor);
+            }
+        }
+    }
+
+    // diffuse
+    const f32 mutationTagRate = 0.005f;
+    i32 tagMutations = 0;
+    /*for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        if(randf64(0.0, 1.0) < mutationTagRate) {
+            tagMutations++;
+            i32 bit = randi64(0, BIRD_TAG_BITS-1);
+            nextSpeciesTag[i] ^= 1 << bit;
+        }
+    }*/
+
+    LOG("subPopCount=%d mutationCount=%d tagMutations=%d", subPopCount, mutationCount, tagMutations);
 
     memmove(curGenNN[0], nextGenNN[0], nnDef.neuralNetSize * BIRD_COUNT);
+    memmove(curSpeciesTag, nextSpeciesTag, sizeof(curSpeciesTag));
 
     resetBirds();
 }
@@ -906,18 +1325,6 @@ void newFrame()
 
     updatePhysics();
     updateMechanics();
-
-    // color bird black when they die
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        if(birdDead[i]) {
-            const Color3 black = {0, 0, 0};
-            birdColor[i] = black;
-            const Color4 c1 = {0, 0, 0, 0};
-            const Color4 c2 = {0, 0, 0, 0};
-            targetLine[i].c1 = c1;
-            targetLine[i].c2 = c2;
-        }
-    }
 
     // update bird body transform
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
@@ -957,29 +1364,22 @@ void newFrame()
 
 void render()
 {
-    Color3* fitColor = birdColor;
-
-#if 0
-    Color3 fitColor[BIRD_COUNT];
-    f64 lowestFitness = 99999;
-    f64 highestFitness = -99999;
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        if(birdHealth[i] <= 0.0) continue;
-        lowestFitness = min(lowestFitness, birdLivingFitness[i]);
-        highestFitness = max(highestFitness, birdLivingFitness[i]);
-    }
+    const Color3 black = {0, 0, 0};
+    const Color4 black4 = {0, 0, 0, 0};
+    Color3 birdColor[BIRD_COUNT];
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        f64 f = (birdLivingFitness[i] - lowestFitness) / (highestFitness - lowestFitness);
-        u8 r = 255 * (1.0 - f);
-        u8 g = 255 * f;
-        u8 b = 0;
-        fitColor[i] = color3(r, g, b);
-        if(birdHealth[i] <= 0.0) {
-            fitColor[i] = color3(0, 0, 0);
+        if(birdDead[i]) {
+            birdColor[i] = black;
+            targetLine[i].c1 = black4;
+            targetLine[i].c2 = black4;
+        }
+        else {
+            birdColor[i] = speciesColor[curSpeciesTag[i]];
+            targetLine[i].c1 = {birdColor[i].r, birdColor[i].g, birdColor[i].b, 255};
+            targetLine[i].c2 = {birdColor[i].r, birdColor[i].g, birdColor[i].b, 0};
         }
     }
-#endif
 
     glClear(GL_COLOR_BUFFER_BIT);
 
@@ -995,9 +1395,9 @@ void render()
 
     drawLineBatch(targetLine, BIRD_COUNT);
 
-    drawSpriteBatch(tex_birdWing, birdLeftWingTf, fitColor, BIRD_COUNT);
-    drawSpriteBatch(tex_birdWing, birdRightWingTf, fitColor, BIRD_COUNT);
-    drawSpriteBatch(tex_birdBody, birdBodyTf, fitColor, BIRD_COUNT);
+    drawSpriteBatch(tex_birdWing, birdLeftWingTf, birdColor, BIRD_COUNT);
+    drawSpriteBatch(tex_birdWing, birdRightWingTf, birdColor, BIRD_COUNT);
+    drawSpriteBatch(tex_birdBody, birdBodyTf, birdColor, BIRD_COUNT);
 
     drawSpriteBatch(tex_apple, appleTf, birdColor, BIRD_COUNT);
 

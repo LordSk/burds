@@ -74,6 +74,18 @@ struct RecurrentNeuralNetDef
     f64 bias;
 };
 
+struct GeneticEnvRnn
+{
+    i32 populationCount;
+    i32 speciesTagBitCount;
+    u8* curSpeciesTags;
+    u8* nextSpeciesTags;
+    RecurrentNeuralNet** curPopRNN;
+    RecurrentNeuralNet** nextPopRNN;
+    RecurrentNeuralNetDef* rnnDef;
+    f64* fitness;
+};
+
 void rnnMakeDef(RecurrentNeuralNetDef* def, const i32 layerCount, const i32 layerNeuronCount[], f64 bias);
 void rnnAlloc(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef* def);
 void rnnDealloc(void* ptr);
@@ -85,9 +97,7 @@ i32 reinsertTruncateNN(i32 maxBest, i32 nnCount, f64* fitness, NeuralNet** nextG
                        NeuralNet** curGen, NeuralNetDef* def);
 i32 reinsertTruncateRNN(i32 maxBest, i32 nnCount, f64* fitness, RecurrentNeuralNet** nextGen,
                         RecurrentNeuralNet** curGen, RecurrentNeuralNetDef* def);
-i32 reinsertTruncateRNNSpecies(i32 maxBest, i32 nnCount, f64* fitness, RecurrentNeuralNet** nextGen,
-                               RecurrentNeuralNet** curGen, RecurrentNeuralNetDef* def, u8* curSpecies,
-                               u8* nextSpecies);
+i32 reinsertTruncateRNNSpecies(i32 maxBest, GeneticEnvRnn* env);
 void crossover(f64* outWeights, f64* parentBWeights,
                f64* parentAWeights, i32 weightCount);
 i32 selectTournament(const i32 reinsertCount, const i32 tournamentSize, i32 notThisId, const f64* fitness);
@@ -99,6 +109,8 @@ i32 mutateRNN(f32 rate, f32 factor, i32 nnCount, RecurrentNeuralNet** nextGen, R
 void testPropagateNN();
 void testPropagateRNN();
 void testPropagateRNNWide();
+
+void generateSpeciesTags(u8* tags, const i32 tagCount, const i32 bitCount);
 
 void ImGui_NeuralNet(NeuralNet* nn, NeuralNetDef* def);
 void ImGui_RecurrentNeuralNet(RecurrentNeuralNet* nn, RecurrentNeuralNetDef* def);
