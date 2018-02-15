@@ -10,6 +10,8 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "imgui/imgui_internal.h"
 
+#define alloc_arr(type, count) ((type*)alloca(sizeof(type) * count))
+
 #define sigmoid(val) (1.0 / (1.0 + expf(-val)))
 #define activate(val) tanh(val)
 //#define activate(val) min(max(0, val), 10.0)
@@ -457,13 +459,36 @@ struct FitnessPair
     f64 fitness;
 };
 
-static i32 compareFitness(const void* a, const void* b)
+static i32 compareFitnessDesc(const void* a, const void* b)
 {
     const FitnessPair* fa = (FitnessPair*)a;
     const FitnessPair* fb = (FitnessPair*)b;
     if(fa->fitness > fb->fitness) return -1;
     if(fa->fitness < fb->fitness) return 1;
     return 0;
+}
+
+static i32 compareFitnessAsc(const void* a, const void* b)
+{
+    const FitnessPair* fa = (FitnessPair*)a;
+    const FitnessPair* fb = (FitnessPair*)b;
+    if(fa->fitness < fb->fitness) return -1;
+    if(fa->fitness > fb->fitness) return 1;
+    return 0;
+}
+
+i32 selectRoulette(const i32 count, f64* fitness, f64 totalFitness)
+{
+    f64 r = randf64(0.0, totalFitness);
+    f64 s = 0.0;
+    for(i32 j = 0; j < count; ++j) {
+        s += fitness[j];
+        if(r < s) {
+            return j;
+        }
+    }
+    assert(0);
+    return -1;
 }
 
 i32 reinsertTruncateNN(i32 maxBest, i32 nnCount, f64* fitness, NeuralNet** nextGen,
@@ -476,7 +501,7 @@ i32 reinsertTruncateNN(i32 maxBest, i32 nnCount, f64* fitness, NeuralNet** nextG
         list[i].fitness = fitness[i];
     }
 
-    qsort(list, nnCount, sizeof(FitnessPair), compareFitness);
+    qsort(list, nnCount, sizeof(FitnessPair), compareFitnessDesc);
 
     for(i32 i = 0; i < maxBest; ++i) {
         memmove(nextGen[i], curGen[list[i].id], def->neuralNetSize);
@@ -495,7 +520,7 @@ i32 reinsertTruncateRNN(i32 maxBest, i32 nnCount, f64* fitness, RecurrentNeuralN
         list[i].fitness = fitness[i];
     }
 
-    qsort(list, nnCount, sizeof(FitnessPair), compareFitness);
+    qsort(list, nnCount, sizeof(FitnessPair), compareFitnessDesc);
 
     for(i32 i = 0; i < maxBest; ++i) {
         memmove(nextGen[i], curGen[list[i].id], def->neuralNetSize);
@@ -523,7 +548,7 @@ i32 reinsertTruncateRNNSpecies(i32 maxBest, GeneticEnvRnn* env)
         list[i].fitness = fitness[i];
     }
 
-    qsort(list, popCount, sizeof(FitnessPair), compareFitness);
+    qsort(list, popCount, sizeof(FitnessPair), compareFitnessDesc);
 
     for(i32 i = 0; i < maxBest; ++i) {
         memmove(nextGen[i], curGen[list[i].id], nnSize);
@@ -800,6 +825,127 @@ void generateSpeciesTags(u8* tags, const i32 tagCount, const i32 bitCount)
     for(i32 i = 0; i < tagCount; ++i) {
         tags[i] = randf64(0, (1 << bitCount)-1);
     }
+}
+
+void evolutionSSS1(GeneticEnvRnn* env)
+{
+    assert(env->speciesBits <= 8);
+    const i32 POP_COUNT = env->populationCount;
+    const i32 SUBPOP_MAX_COUNT = (1 << env->speciesBits);
+
+    f64* indivFitness = env->fitness;
+    RecurrentNeuralNet** curPopNN = env->curPopRNN;
+    RecurrentNeuralNet** nextPopNN = env->nextPopRNN;
+    u8* curPopTag = env->curSpeciesTags;
+    u8* nextPopTag = env->nextSpeciesTags;
+    const i32 weightTotalCount = env->rnnDef->weightTotalCount;
+    const i32 neuralNetSize = env->rnnDef->neuralNetSize;
+
+    i32* subPopIndivCount = alloc_arr(i32,SUBPOP_MAX_COUNT);
+    memset(subPopIndivCount, 0, SUBPOP_MAX_COUNT * sizeof(i32));
+    f64* normFitness = alloc_arr(f64,POP_COUNT);
+    const i32 parentCount = POP_COUNT * 0.3;
+    i32* parents = alloc_arr(i32,parentCount);
+
+    for(i32 i = 0; i < POP_COUNT; ++i) {
+        u8 tag = curPopTag[i];
+        subPopIndivCount[tag]++;
+    }
+
+    // fitness sharing
+    f64 totalFitness = 0.0;
+    for(i32 i = 0; i < POP_COUNT; ++i) {
+        normFitness[i] = indivFitness[i] / subPopIndivCount[curPopTag[i]];
+        totalFitness += normFitness[i];
+    }
+
+    // select parents
+    i32 rouletteMisses = 0;
+    u8* chosenAsParent = alloc_arr(u8,POP_COUNT);
+    memset(chosenAsParent, 0, sizeof(u8)*POP_COUNT);
+    for(i32 p = 0; p < parentCount; ++p) {
+        i32 tries = 200;
+        bool found = false;
+        while(tries-- && !found) {
+            i32 s = selectRoulette(POP_COUNT, normFitness, totalFitness);
+            if(!chosenAsParent[s]) {
+                parents[p] = s;
+                chosenAsParent[s] = 1;
+                found = true;
+            }
+        }
+        if(!found) {
+            parents[p] = selectRoulette(POP_COUNT, normFitness, totalFitness);
+            rouletteMisses++;
+        }
+    }
+
+    i32 noMatesFoundCount = 0;
+    RecurrentNeuralNet** potentialMates = alloc_arr(RecurrentNeuralNet*,parentCount);
+    f64* pmFitness = alloc_arr(f64,parentCount);
+
+    for(i32 i = 0; i < POP_COUNT; ++i) {
+        const i32 parentA = randi64(0, parentCount-1);
+        const i32 idA = parents[parentA];
+        const u8 tagA = curPopTag[idA];
+
+        // find same sub pop mates
+        i32 potentialMatesCount = 0;
+        i32 pmTotalFitness = 0.0;
+        for(i32 j = 0; j < parentCount; ++j) {
+            i32 idB = parents[j];
+            if(parentA != j && tagA == curPopTag[idB]) {
+                i32 pmId = potentialMatesCount++;
+                potentialMates[pmId] = curPopNN[idB];
+                pmFitness[pmId] = normFitness[idB];
+                pmTotalFitness += pmFitness[pmId];
+            }
+        }
+
+        if(potentialMatesCount < 1) {
+            noMatesFoundCount++;
+            memmove(nextPopNN[i], curPopNN[idA], neuralNetSize);
+            nextPopTag[i] = tagA;
+        }
+        else {
+            RecurrentNeuralNet* mateA = curPopNN[idA];
+            i32 mateBId = selectRoulette(potentialMatesCount, pmFitness, pmTotalFitness);
+            RecurrentNeuralNet* mateB = potentialMates[mateBId];
+            crossover(nextPopNN[i]->weights, mateA->weights, mateB->weights, weightTotalCount);
+            nextPopTag[i] = tagA;
+        }
+    }
+
+    LOG("noMatesFoundCount=%d rouletteMisses=%d", noMatesFoundCount, rouletteMisses);
+
+    // mutate
+    const f32 mutationRate = 0.005f;
+    i32 mutationCount = 0;
+    for(i32 i = 0; i < POP_COUNT; ++i) {
+        f64 mutationFactor = ((f64)i/POP_COUNT) * 0.5;
+        for(i32 s = 0; s < weightTotalCount; ++s) {
+            if(randf64(0.0, 1.0) < mutationRate) {
+                mutationCount++;
+                nextPopNN[i]->weights[s] += randf64(-mutationFactor, mutationFactor);
+            }
+        }
+    }
+
+    // diffuse
+    const f32 mutationTagRate = 0.005f;
+    i32 tagMutations = 0;
+    /*for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        if(randf64(0.0, 1.0) < mutationTagRate) {
+            tagMutations++;
+            i32 bit = randi64(0, BIRD_TAG_BITS-1);
+            nextSpeciesTag[i] ^= 1 << bit;
+        }
+    }*/
+
+    LOG("mutationCount=%d tagMutations=%d", mutationCount, tagMutations);
+
+    memmove(curPopNN[0], nextPopNN[0], neuralNetSize * POP_COUNT);
+    memmove(curPopTag, nextPopTag, sizeof(curPopTag[0]) * POP_COUNT);
 }
 
 void ImGui_NeuralNet(NeuralNet* nn, NeuralNetDef* def)

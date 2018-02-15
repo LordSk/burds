@@ -77,7 +77,7 @@ struct RecurrentNeuralNetDef
 struct GeneticEnvRnn
 {
     i32 populationCount;
-    i32 speciesTagBitCount;
+    i32 speciesBits;
     u8* curSpeciesTags;
     u8* nextSpeciesTags;
     RecurrentNeuralNet** curPopRNN;
@@ -111,6 +111,9 @@ void testPropagateRNN();
 void testPropagateRNNWide();
 
 void generateSpeciesTags(u8* tags, const i32 tagCount, const i32 bitCount);
+
+// Simple subpopulation scheme evolution
+void evolutionSSS1(GeneticEnvRnn* env);
 
 void ImGui_NeuralNet(NeuralNet* nn, NeuralNetDef* def);
 void ImGui_RecurrentNeuralNet(RecurrentNeuralNet* nn, RecurrentNeuralNetDef* def);

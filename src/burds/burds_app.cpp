@@ -263,7 +263,7 @@ void resetApplePath()
 
 void resetSimulation()
 {
-    //generateSpeciesTags(curSpeciesTag, BIRD_COUNT, BIRD_TAG_BITS);
+    generateSpeciesTags(curSpeciesTag, BIRD_COUNT, BIRD_TAG_BITS);
     resetBirdColors();
     resetBirds();
     resetApplePath();
@@ -272,7 +272,7 @@ void resetSimulation()
     curGenStats = {};
     rnnInitRandom(curGenNN, BIRD_COUNT, &nnDef);
 
-    const i32 weightTotalCount = nnDef.weightTotalCount;
+    /*const i32 weightTotalCount = nnDef.weightTotalCount;
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         f64 sum = 0.0;
         for(i32 w = 0; w < weightTotalCount; ++w) {
@@ -281,7 +281,7 @@ void resetSimulation()
         sum *= sum;
         sum *= 1000.0;
         curSpeciesTag[i] = ((u32)sum) & ((1 << BIRD_TAG_BITS) - 1);
-    }
+    }*/
 }
 
 i32 init()
@@ -993,38 +993,6 @@ struct FitnessPair
     f64 fitness;
 };
 
-static i32 compareFitnessDesc(const void* a, const void* b)
-{
-    const FitnessPair* fa = (FitnessPair*)a;
-    const FitnessPair* fb = (FitnessPair*)b;
-    if(fa->fitness > fb->fitness) return -1;
-    if(fa->fitness < fb->fitness) return 1;
-    return 0;
-}
-
-static i32 compareFitnessAsc(const void* a, const void* b)
-{
-    const FitnessPair* fa = (FitnessPair*)a;
-    const FitnessPair* fb = (FitnessPair*)b;
-    if(fa->fitness < fb->fitness) return -1;
-    if(fa->fitness > fb->fitness) return 1;
-    return 0;
-}
-
-i32 selectRoulette(const i32 count, f64* fitness, f64 totalFitness)
-{
-    f64 r = randf64(0.0, totalFitness);
-    f64 s = 0.0;
-    for(i32 j = 0; j < count; ++j) {
-        s += fitness[j];
-        if(r < s) {
-            return j;
-        }
-    }
-    assert(0);
-    return -1;
-}
-
 void nextGeneration()
 {
     for(i32 o = 0; o < 4; ++o) {
@@ -1050,262 +1018,8 @@ void nextGeneration()
         genHealthFactor.bmin, genHealthFactor.bmax
         );
 
-#if 0
-    i32 reinsertCount = reinsertTruncateRNNSpecies(BIRD_COUNT*0.1, &genetivEnv);
 
-    const i32 tournamentSize = 15;
-    LOG("tournamentSize=%d", tournamentSize);
-
-    i32 crossoverMisses = 0;
-    // cross over
-    for(i32 i = reinsertCount; i < BIRD_COUNT; ++i) {
-        i32 parentA = selectTournament(BIRD_COUNT, tournamentSize, -1, birdFitness);
-        const u8 parentATag = curSpeciesTag[parentA];
-        i32 parentB = selectTournamentSpecies(BIRD_COUNT, 3000, parentA, birdFitness, curSpeciesTag,
-                                              parentATag);
-        crossover(nextGenNN[i]->weights, curGenNN[parentA]->weights, curGenNN[parentB]->weights,
-                  nnDef.weightTotalCount);
-        if(curSpeciesTag[parentB] != parentATag) {
-            crossoverMisses++;
-        }
-        nextSpeciesTag[i] = curSpeciesTag[parentB];
-    }
-
-    LOG("crossover misses: %d", crossoverMisses);
-
-    // mutate
-    const f32 mutationRate = 0.005f;
-    i32 mutationCount = 0;
-
-    for(i32 i = 0; i < reinsertCount; ++i) {
-        f64 mutationFactor = (f64)i/BIRD_COUNT * 0.5;
-        for(i32 s = 0; s < nnDef.weightTotalCount; ++s) {
-            // mutate
-            if(randf64(0.0, 1.0) < mutationRate) {
-                mutationCount++;
-                nextGenNN[i]->weights[s] += randf64(-mutationFactor, mutationFactor);
-            }
-        }
-    }
-    for(i32 i = reinsertCount; i < BIRD_COUNT; ++i) {
-        f64 mutationFactor = 0.5;
-        for(i32 s = 0; s < nnDef.weightTotalCount; ++s) {
-            // mutate
-            if(randf64(0.0, 1.0) < mutationRate) {
-                mutationCount++;
-                nextGenNN[i]->weights[s] += randf64(-mutationFactor, mutationFactor);
-            }
-        }
-    }
-
-    const f32 mutationTagRate = 0.02f;
-    i32 tagMutations = 0;
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        f64 rate = (f64)i/BIRD_COUNT * mutationTagRate;
-        if(randf64(0.0, 1.0) < rate) {
-            tagMutations++;
-            i32 bit = randi64(0, BIRD_TAG_BITS-1);
-            nextSpeciesTag[i] ^= 1 << bit;
-        }
-    }
-
-    LOG("mutationRate=%g mutationCount=%d tagMutations=%d", mutationRate, mutationCount, tagMutations);
-#endif
-    i32 subPopIndivCount[SUBPOP_MAX_COUNT] = {0};
-    i32 subPopCount = 0;
-    f64 normFitness[BIRD_COUNT];
-    constexpr i32 parentCount = BIRD_COUNT * 0.3;
-    i32 parents[parentCount];
-
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        u8 tag = curSpeciesTag[i];
-        if(subPopIndivCount[tag] == 0) {
-            subPopCount++;
-        }
-        subPopIndivCount[tag]++;
-    }
-
-    // fitness sharing
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        normFitness[i] = birdFitness[i] / subPopIndivCount[curSpeciesTag[i]];
-    }
-
-    /*for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        normFitness[i] = birdFitness[i];
-    }*/
-
-    // reinsert
-    /*const i32 reinsertCount = subPopCount;
-    FitnessPair fpList[BIRD_COUNT];
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        fpList[i].id = i;
-        fpList[i].fitness = birdFitness[i];
-    }
-    qsort(fpList, BIRD_COUNT, sizeof(FitnessPair), compareFitness);
-
-    for(i32 i = 0; i < reinsertCount; ++i) {
-        i32 id = fpList[i].id;
-        memmove(nextGenNN[i], curGenNN[id], nnDef.neuralNetSize);
-        nextSpeciesTag[i] = curSpeciesTag[id];
-    }*/
-
-#if 0
-    // select parents (tournament)
-    u8 chosenAsParent[BIRD_COUNT] = {0};
-    const i32 tournamentSize = 20;
-
-    for(i32 i = 0; i < parentCount; ++i) {
-        i32 champion = randi64(0, BIRD_COUNT-1);
-        while(chosenAsParent[champion]) {
-            champion = randi64(0, BIRD_COUNT-1);
-        }
-        f64 championFitness = normFitness[champion];
-
-        for(i32 t = 0; t < tournamentSize; ++t) {
-            i32 opponent = randi64(0, BIRD_COUNT-1);
-            while(chosenAsParent[opponent]) {
-                opponent = randi64(0, BIRD_COUNT-1);
-            }
-            if(normFitness[opponent] > championFitness) {
-                champion = opponent;
-                championFitness = normFitness[opponent];
-            }
-        }
-
-        parents[i] = champion;
-        chosenAsParent[champion] = 1;
-    }
-#else
-
-    f64 totalFitness = 0.0;
-    // select parents (roulette wheel)
-    FitnessPair fpList[BIRD_COUNT];
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        fpList[i].id = i;
-        fpList[i].fitness = normFitness[i];
-        totalFitness += normFitness[i];
-    }
-    qsort(fpList, BIRD_COUNT, sizeof(FitnessPair), compareFitnessAsc);
-
-    u8 chosenAsParent[BIRD_COUNT] = {0};
-    for(i32 p = 0; p < parentCount; ++p) {
-        i32 tries = 100;
-        bool found = false;
-        while(tries-- && !found) {
-            f64 r = randf64(0, totalFitness);
-            // find where we ended up
-            f64 s = 0.0;
-            for(i32 j = 0; j < BIRD_COUNT; ++j) {
-                s += normFitness[j];
-                if(r < s) {
-                    if(!chosenAsParent[j]) {
-                        parents[p] = j;
-                        chosenAsParent[j] = 1;
-                        found = true;
-                    }
-                    break;
-                }
-            }
-        }
-    }
-
-#endif
-
-    // restricted mating
-#if 1
-    i32 noMatesFoundCount = 0;
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        const i32 parentA = randi64(0, parentCount-1);
-        const i32 idA = parents[parentA];
-        const u8 tagA = curSpeciesTag[idA];
-
-        // find same sub pop mates
-        RecurrentNeuralNet* potentialMates[parentCount];
-        f64 pmFitness[parentCount];
-        i32 potentialMatesCount = 0;
-        i32 pmTotalFitness = 0.0;
-        for(i32 j = 0; j < parentCount; ++j) {
-            i32 idB = parents[j];
-            if(parentA != j && tagA == curSpeciesTag[idB]) {
-                i32 pmId = potentialMatesCount++;
-                potentialMates[pmId] = curGenNN[idB];
-                pmFitness[pmId] = normFitness[idB];
-                pmTotalFitness += pmFitness[pmId];
-            }
-        }
-
-        if(potentialMatesCount < 1) {
-            noMatesFoundCount++;
-            memmove(nextGenNN[i], curGenNN[idA], nnDef.neuralNetSize);
-            nextSpeciesTag[i] = tagA;
-        }
-        else {
-            RecurrentNeuralNet* mateA = curGenNN[idA];
-            i32 mateBId = selectRoulette(potentialMatesCount, pmFitness, pmTotalFitness);
-            RecurrentNeuralNet* mateB = potentialMates[mateBId];
-            crossover(nextGenNN[i]->weights, mateA->weights, mateB->weights, nnDef.weightTotalCount);
-            nextSpeciesTag[i] = tagA;
-        }
-    }
-#else
-    i32 noMatesFoundCount = 0;
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        const i32 parentA = selectTournament(BIRD_COUNT, 15, -1, normFitness);
-        const u8 tagA = curSpeciesTag[parentA];
-
-        // find same sub pop mates
-        RecurrentNeuralNet* potentialMates[BIRD_COUNT];
-        i32 potentialMatesCount = 0;
-        for(i32 j = 0; j < BIRD_COUNT; ++j) {
-            if(parentA != j && tagA == curSpeciesTag[j]) {
-                potentialMates[potentialMatesCount++] = curGenNN[j];
-            }
-        }
-
-        if(potentialMatesCount < 1) {
-            noMatesFoundCount++;
-            memmove(nextGenNN[i], curGenNN[parentA], nnDef.neuralNetSize);
-            nextSpeciesTag[i] = tagA;
-        }
-        else {
-            RecurrentNeuralNet* mateA = curGenNN[parentA];
-            RecurrentNeuralNet* mateB = potentialMates[randi64(0, potentialMatesCount-1)];
-            crossover(nextGenNN[i]->weights, mateA->weights, mateB->weights, nnDef.weightTotalCount);
-            nextSpeciesTag[i] = tagA;
-        }
-    }
-#endif
-
-    LOG("noMatesFoundCount=%d", noMatesFoundCount);
-
-    // mutate
-    const f32 mutationRate = 0.005f;
-    i32 mutationCount = 0;
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        f64 mutationFactor = ((f64)i/BIRD_COUNT) * 0.5;
-        for(i32 s = 0; s < nnDef.weightTotalCount; ++s) {
-            if(randf64(0.0, 1.0) < mutationRate) {
-                mutationCount++;
-                nextGenNN[i]->weights[s] += randf64(-mutationFactor, mutationFactor);
-            }
-        }
-    }
-
-    // diffuse
-    const f32 mutationTagRate = 0.005f;
-    i32 tagMutations = 0;
-    /*for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        if(randf64(0.0, 1.0) < mutationTagRate) {
-            tagMutations++;
-            i32 bit = randi64(0, BIRD_TAG_BITS-1);
-            nextSpeciesTag[i] ^= 1 << bit;
-        }
-    }*/
-
-    LOG("subPopCount=%d mutationCount=%d tagMutations=%d", subPopCount, mutationCount, tagMutations);
-
-    memmove(curGenNN[0], nextGenNN[0], nnDef.neuralNetSize * BIRD_COUNT);
-    memmove(curSpeciesTag, nextSpeciesTag, sizeof(curSpeciesTag));
+    evolutionSSS1(&genetivEnv);
 
     resetBirds();
 }
