@@ -50,7 +50,7 @@ constexpr i32 SUBPOP_MAX_COUNT = 1 << BIRD_TAG_BITS;
 #define REINSERT_DUPLICATE 0x2
 #define REINSERT_STRATEGY REINSERT_TRUNCATE
 
-#define NEURAL_NET_LAYERS { 4, 10, 4 }
+#define NEURAL_NET_LAYERS { 4, 12, 4 }
 
 #define STATS_HISTORY_COUNT 30
 
@@ -107,7 +107,9 @@ u8 curSpeciesTag[BIRD_COUNT];
 u8 nextSpeciesTag[BIRD_COUNT];
 
 i32 birdAppleEatenCount[BIRD_COUNT];
+f32 birdDistToNextApple[BIRD_COUNT];
 f32 birdShortestDistToNextApple[BIRD_COUNT];
+f32 birdShortestDistToNextAppleOld[BIRD_COUNT];
 f32 birdLongestDistToNextApple[BIRD_COUNT];
 f32 birdMaxHealthAchieved[BIRD_COUNT];
 f64 birdDistToNextAppleSum[BIRD_COUNT];
@@ -150,7 +152,7 @@ GenerationStats pastGenStats[STATS_HISTORY_COUNT];
 
 Bounds outBounds[4];
 
-GeneticEnvRnn genetivEnv = { BIRD_COUNT, BIRD_TAG_BITS, curSpeciesTag, nextSpeciesTag,
+GeneticEnvRnn geneticEnv = { BIRD_COUNT, BIRD_TAG_BITS, curSpeciesTag, nextSpeciesTag,
                          curGenNN, nextGenNN, &nnDef, birdFitness };
 
 void resetBirdColors()
@@ -605,7 +607,7 @@ void ui_subPopulations()
         subPopColors[i] = ImVec4(sc.r/255.f, sc.g/255.f, sc.b/255.f, 1.f);
     }
 
-    ImGui_SubPopWindow(&env, subPopColors);
+    ImGui_SubPopWindow(&geneticEnv, subPopColors);
 }
 
 void ui_simOptions()
@@ -682,7 +684,8 @@ void updateNNs()
         curGenNN[i]->values[3] = vec2Len(&diff) / 3000.0;
     }
 
-    rnnPropagate(aliveNN, aliveCount, &nnDef);
+    //rnnPropagate(aliveNN, aliveCount, &nnDef);
+    rnnPropagateWide(aliveNN, aliveCount, &nnDef);
 
     // get neural net output
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
@@ -721,7 +724,6 @@ void updateMechanics()
 
     // check if we touched the apple
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        if(birdDead[i]) continue;
         Vec2* applePos = &applePosList[birdApplePositionId[i]];
         if(vec2Distance(applePos, &birdPos[i]) < APPLE_RADIUS) {
             birdApplePositionId[i]++;
@@ -736,12 +738,22 @@ void updateMechanics()
     }
 
     // update shortest/longest distance to next apple
+    memmove(birdShortestDistToNextAppleOld, birdShortestDistToNextApple,
+            sizeof(birdShortestDistToNextApple));
+
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         f32 dist = vec2Distance(&applePosList[birdApplePositionId[i]], &birdPos[i]);
         birdShortestDistToNextApple[i] = min(birdShortestDistToNextApple[i], dist);
-        birdLongestDistToNextApple[i] = max(birdShortestDistToNextApple[i], dist);
+        birdLongestDistToNextApple[i] = max(birdLongestDistToNextApple[i], dist);
         birdDistToNextAppleSum[i] += dist;
         birdDistCheckCount[i]++;
+    }
+
+    f32 birdDistToNextAppleOld[BIRD_COUNT];
+    memmove(birdDistToNextAppleOld, birdDistToNextApple, sizeof(birdDistToNextApple));
+
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        birdDistToNextApple[i] = vec2Distance(&applePosList[birdApplePositionId[i]], &birdPos[i]);
     }
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
@@ -759,6 +771,7 @@ void updateMechanics()
     }
 
     // calculate fitness
+#if 0
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         if(birdDead[i]) continue;
         f64 applesFactor = birdAppleEatenCount[i];
@@ -793,6 +806,17 @@ void updateMechanics()
         genLongDistFactor.bmax = max(genLongDistFactor.bmax, longDistFactor);
         genHealthFactor.bmin = min(genHealthFactor.bmin, healthFactor);
         genHealthFactor.bmax = max(genHealthFactor.bmax, healthFactor);
+    }
+#endif
+
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        if(birdDead[i]) continue;
+
+        birdFitness[i] += birdAppleEatenCount[i];
+
+        if(birdDistToNextAppleOld[i] > birdDistToNextApple[i]) {
+           birdFitness[i] += (birdDistToNextAppleOld[i] - birdDistToNextApple[i]) / 1000.0;
+        }
     }
 
     f64 maxFitness = 0.0;
@@ -996,17 +1020,17 @@ void nextGeneration()
     LOG("#%d maxFitness=%.5f avg=%.5f", generationNumber,
         lastGenStats.maxFitness, lastGenStats.avgFitness);
     //LOG("out1[%.3f, %.3f] out1[%.3f, %.3f]", outMin1, outMax1, outMin2, outMax2);
-    LOG("fitness=[%.5f, %.5f] shortDist=[%.5f, %.5f] avgDist=[%.5f, %.5f] longDist=[%.5f, %.5f]"
+    /*LOG("fitness=[%.5f, %.5f] shortDist=[%.5f, %.5f] avgDist=[%.5f, %.5f] longDist=[%.5f, %.5f]"
         " health=[%.5f, %.5f]",
         genFitness.bmin, genFitness.bmax,
         genShortDistFactor.bmin, genShortDistFactor.bmax,
         genAvgDistFactor.bmin, genAvgDistFactor.bmax,
         genLongDistFactor.bmin, genLongDistFactor.bmax,
         genHealthFactor.bmin, genHealthFactor.bmax
-        );
+        );*/
 
 
-    evolutionSSS1(&genetivEnv);
+    evolutionSSS1(&geneticEnv);
 
     resetBirds();
 }

@@ -1076,18 +1076,6 @@ void updateMechanics()
         }
     }
 
-    bool everyoneIsDead = true;
-    for(i32 i = 0; i < FROG_COUNT && everyoneIsDead; ++i) {
-        if(!frogDead[i]) {
-            everyoneIsDead = false;
-        }
-    }
-
-    if(everyoneIsDead) {
-        newGeneration();
-        return;
-    }
-
     for(i32 i = 0; i < FROG_COUNT; ++i) {
         if(frogDead[i]) continue;
 
@@ -1129,7 +1117,7 @@ void updateMechanics()
         if(mapData[my * MAP_WIDTH + mx] == MAP_TILE_WATER) {
             frogHydration[i] += HYDRATION_GAIN_PER_SEC * FRAME_DT;
             frogHydration[i] = min(frogHydration[i], HYDRATION_TOTAL);
-            frogRewards[i] += 1;
+            frogRewards[i] += 10;
         }
         /*else if(mapData[my * MAP_WIDTH + mx] == MAP_TILE_DEATH) {
             frogDead[i] = true;
@@ -1159,6 +1147,13 @@ void updateMechanics()
         }
     }
 
+    bool everyoneIsDead = true;
+    for(i32 i = 0; i < FROG_COUNT && everyoneIsDead; ++i) {
+        if(!frogDead[i]) {
+            everyoneIsDead = false;
+        }
+    }
+
     f64 maxFitness = 0.0;
     f64 totalFitness = 0.0;
     for(i32 i = 0; i < FROG_COUNT; ++i) {
@@ -1170,6 +1165,10 @@ void updateMechanics()
 
     curGenStats.avgFitness = totalFitness / FROG_COUNT;
     curGenStats.maxFitness = maxFitness;
+
+    if(everyoneIsDead) {
+        newGeneration();
+    }
 }
 
 void newGeneration()

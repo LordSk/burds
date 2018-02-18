@@ -540,7 +540,7 @@ static i32 compareFitnessAsc(const void* a, const void* b)
 
 i32 selectRoulette(const i32 count, f64* fitness, f64 totalFitness)
 {
-    assert(totalFitness > 0);
+    //assert(totalFitness > 0);
     f64 r = randf64(0.0, totalFitness);
     f64 s = 0.0;
     for(i32 j = 0; j < count; ++j) {
@@ -550,7 +550,7 @@ i32 selectRoulette(const i32 count, f64* fitness, f64 totalFitness)
         }
     }
     assert(0);
-    return -1;
+    return 0;
 }
 
 i32 reinsertTruncateNN(i32 maxBest, i32 nnCount, f64* fitness, NeuralNet** nextGen,
