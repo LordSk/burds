@@ -10,10 +10,13 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "imgui/imgui_internal.h"
 
-#define alloc_arr(type, count) ((type*)alloca(sizeof(type) * count))
+#define stack_arr(type, count) ((type*)alloca(sizeof(type) * count))
+#define zero_arr(arr, count) (memset(arr, 0, sizeof(arr[0]) * count))
 
 #define sigmoid(val) (1.0 / (1.0 + expf(-val)))
-#define activate(val) tanh(val)
+//#define hidden_activate(val) min(max(0, val), 10.0)
+#define hidden_activate(val) tanh(val)
+#define output_activate(val) ((tanh(val) + 1.0) * 0.5)
 //#define activate(val) min(max(0, val), 10.0)
 //#define output_activate(val, outputCount) ((tanhf(val) + 1.0) * 0.5)
 #define pow2(val) (val * val)
@@ -39,6 +42,48 @@ inline w128d wide_f64_exp1(w128d x)
     x = wide_f64_mul(x, x);
     x = wide_f64_mul(x, x);
     return x;
+}
+
+inline w128d wide_f64_abs(w128d src)
+{
+    w128d zero = wide_f64_zero();
+    w128d minus1 = wide_f64_set1(-1.0);
+    w128d ltMask = wide_f64_less_than(src, zero);
+    w128d srcAbs = wide_f64_mul(src, minus1);
+    srcAbs = wide_f64_blendv(src, srcAbs, ltMask);
+    return srcAbs;
+}
+
+inline w128d wide_f64_tanh(w128d src)
+{
+    // x = abs(src[i]);
+    w128d zero = wide_f64_zero();
+    w128d minus1 = wide_f64_set1(-1.0);
+    w128d ltMask = wide_f64_less_than(src, zero);
+    w128d x = wide_f64_mul(src, minus1);
+    x = wide_f64_blendv(src, x, ltMask);
+
+    w128d one = wide_f64_set1(1.0);
+    w128d f1 = wide_f64_set1(0.5658);
+    w128d f2 = wide_f64_set1(0.1430);
+    // x*x*x*x*0.1430
+    w128d e1 = wide_f64_mul(f2, x);
+    e1 = wide_f64_mul(e1, x);
+    e1 = wide_f64_mul(e1, x);
+    e1 = wide_f64_mul(e1, x);
+    // x*x*0.5658
+    w128d e2 = wide_f64_mul(f1, x);
+    e2 = wide_f64_mul(e2, x);
+    // e = 1 + x + e1 + e2
+    w128d e = wide_f64_add(e1, e2);
+    e = wide_f64_add(e, x);
+    e = wide_f64_add(e, one);
+    // out[i] = (src[i] > 0 ? 1 : -1)*(e - 1/e)/(e + 1/e);
+    w128d div1e = wide_f64_div(one, e);
+    w128d out = wide_f64_div(wide_f64_sub(e, div1e), wide_f64_add(e, div1e));
+    w128d m1 = wide_f64_blendv(one, minus1, ltMask);
+    out = wide_f64_mul(out, m1);
+    return out;
 }
 
 u8* nnAlloc(NeuralNet** nn, const i32 nnCount, const NeuralNetDef* def)
@@ -91,7 +136,7 @@ void nnPropagate(NeuralNet** nn, const i32 nnCount, const NeuralNetDef* def)
                 }
                 value += bias; // bias
 
-                neuronCurValues[n] = activate(value);
+                neuronCurValues[n] = hidden_activate(value);
                 neuronWeights += prevLayerNeuronCount;
             }
 
@@ -148,8 +193,7 @@ void nnMakeDef(NeuralNetDef* def, const i32 layerCount, const i32 layerNeuronCou
 
 void rnnMakeDef(RecurrentNeuralNetDef* def, const i32 layerCount, const i32 layerNeuronCount[], f64 bias)
 {
-    assert(layerCount == 3);
-
+    assert(layerCount >= 2);
     def->layerCount = layerCount;
     memmove(def->layerNeuronCount, layerNeuronCount, sizeof(i32) * layerCount);
 
@@ -188,7 +232,11 @@ void rnnAlloc(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralN
 
     for(i32 i = 0; i < nnCount; ++i) {
         nn[i] = (RecurrentNeuralNet*)(data + def->neuralNetSize * i);
+#ifdef CONF_DEBUG
+        memset(nn[i], 0xAB+i, def->neuralNetSize);
+#endif
         nn[i]->values = (f64*)(nn[i] + 1);
+        assert((intptr_t)nn[i]->values - (intptr_t)nn[i] == sizeof(RecurrentNeuralNet));
         nn[i]->weights = nn[i]->values + def->neuronCount;
         nn[i]->prevHiddenValues = nn[i]->values + def->neuronCount - def->hiddenStateNeuronCount;
         nn[i]->prevHiddenWeights = nn[i]->weights + def->weightTotalCount - def->hiddenStateWeightCount;
@@ -205,6 +253,20 @@ void rnnDealloc(void* ptr)
     _aligned_free(ptr);
 }
 
+
+void rnnCopy(RecurrentNeuralNet* dest, RecurrentNeuralNet* src, RecurrentNeuralNetDef* def)
+{
+    const i32 weightTotalCount = def->weightTotalCount;
+    const i32 neuronCount = def->neuronCount;
+
+    for(i32 i = 0; i < weightTotalCount; ++i) {
+        dest->weights[i] = src->weights[i];
+    }
+    for(i32 i = 0; i < neuronCount; ++i) {
+        dest->values[i] = src->values[i];
+    }
+}
+
 void rnnInitRandom(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef* def)
 {
     for(i32 i = 0; i < nnCount; ++i) {
@@ -218,12 +280,13 @@ void rnnInitRandom(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNe
 void rnnPropagate(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef* def)
 {
     const f64 bias = def->bias;
+    const i32 layerCount = def->layerCount;
     const i32 inputNeuronCount = def->inputNeuronCount;
     const i32 outputNeuronCount = def->outputNeuronCount;
-    const i32 hiddenNeuronCount = def->hiddenStateNeuronCount;
+    const i32 hiddenStateNeuronCount = def->hiddenStateNeuronCount;
 
     for(i32 i = 0; i < nnCount; ++i) {
-        f64* inputValues = nn[i]->values;
+        f64* prevLayerVals = nn[i]->values;
         f64* hiddenStateVals = nn[i]->values + inputNeuronCount;
         f64* weights = nn[i]->weights;
         f64* prevHiddenValues = nn[i]->prevHiddenValues;
@@ -231,66 +294,70 @@ void rnnPropagate(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeu
         f64* output = nn[i]->output;
 
         // compute new hidden state
-        for(i32 n = 0; n < hiddenNeuronCount; ++n) {
-            f64 value = 0.0;
-            // input * inputWeights
-            for(i32 s = 0; s < inputNeuronCount; ++s) {
-                value += weights[s] * inputValues[s];
-            }
-            // prevSate * prevSateWeights
-            for(i32 s = 0; s < hiddenNeuronCount; ++s) {
-                value += prevHiddenWeights[s] * prevHiddenValues[s];
-            }
-            value += bias; // bias
-            hiddenStateVals[n] = activate(value);
+        for(i32 l = 1; l < layerCount-1; ++l) {
+            const i32 prevNeuronCount = def->layerNeuronCount[l-1];
+            const i32 hiddenNeuronCount = def->layerNeuronCount[l];
 
-            weights += inputNeuronCount;
-            prevHiddenWeights += hiddenNeuronCount;
+            for(i32 n = 0; n < hiddenNeuronCount; ++n) {
+                f64 value = 0.0;
+                // prevLayervals * prevLayerWeights
+                for(i32 s = 0; s < prevNeuronCount; ++s) {
+                    value += weights[s] * prevLayerVals[s];
+                }
+                // prevSate * prevSateWeights
+                for(i32 s = 0; s < hiddenNeuronCount; ++s) {
+                    value += prevHiddenWeights[s] * prevHiddenValues[s];
+                }
+                value += bias; // bias
+                hiddenStateVals[n] = hidden_activate(value);
+
+                weights += prevNeuronCount;
+                prevHiddenWeights += hiddenNeuronCount;
+            }
+
+
+            prevLayerVals += prevNeuronCount;
+            hiddenStateVals += hiddenNeuronCount;
+            prevHiddenValues += hiddenNeuronCount;
         }
 
-        f64 outputTotal = 0;
+        //f64 outputTotal = 0;
+        const i32 prevNeuronCount = def->layerNeuronCount[layerCount-2];
+        f64* lastHiddenVals = output - prevNeuronCount;
         for(i32 n = 0; n < outputNeuronCount; ++n) {
             f64 value = 0.0;
             // hiddenState * outputWeights
-            for(i32 s = 0; s < hiddenNeuronCount; ++s) {
-                value += weights[s] * hiddenStateVals[s];
+            for(i32 s = 0; s < prevNeuronCount; ++s) {
+                value += weights[s] * lastHiddenVals[s];
             }
             value += bias; // bias
-            /*output[n] = exp1(clamp(value, -10.0, 10.0));
-            assert(output[n] >= 0.0);*/
-            output[n] = (tanh(value) + 1.0) * 0.5;
-            outputTotal += output[n];
-            weights += hiddenNeuronCount;
-        }
+            output[n] = output_activate(value);
 
-        // softmax
-        /*if(outputTotal == 0) {
-            memset(output, 0, sizeof(output[0]) * outputNeuronCount);
-            output[0] = 1.0;
+            weights += prevNeuronCount;
         }
-        else {
-            for(i32 n = 0; n < outputNeuronCount; ++n) {
-                output[n] /= outputTotal;
-                assert(output[n] >= 0.0 && output[n] <= 1.0);
-            }
-        }*/
-
 
         // "pass on" new hidden state
-        memmove(prevHiddenValues, hiddenStateVals, hiddenNeuronCount * sizeof(hiddenStateVals[0]));
+        hiddenStateVals = nn[i]->values + inputNeuronCount;
+        prevHiddenValues = nn[i]->prevHiddenValues;
+        memmove(prevHiddenValues, hiddenStateVals, hiddenStateNeuronCount * sizeof(hiddenStateVals[0]));
     }
 }
 
 void rnnPropagateWide(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef* def)
 {
+    for(i32 l = 0; l < def->layerCount; ++l) {
+        assert((def->layerNeuronCount[l] & 1) == 0);
+    }
+
 #if 0
     const f64 bias = def->bias;
+    const i32 layerCount = def->layerCount;
     const i32 inputNeuronCount = def->inputNeuronCount;
     const i32 outputNeuronCount = def->outputNeuronCount;
-    const i32 hiddenNeuronCount = def->hiddenStateNeuronCount;
+    const i32 hiddenStateNeuronCount = def->hiddenStateNeuronCount;
 
     for(i32 i = 0; i < nnCount; ++i) {
-        f64* inputValues = nn[i]->values;
+        f64* prevLayerVals = nn[i]->values;
         f64* hiddenStateVals = nn[i]->values + inputNeuronCount;
         f64* weights = nn[i]->weights;
         f64* prevHiddenValues = nn[i]->prevHiddenValues;
@@ -298,81 +365,78 @@ void rnnPropagateWide(RecurrentNeuralNet** nn, const i32 nnCount, const Recurren
         f64* output = nn[i]->output;
 
         // compute new hidden state
-        for(i32 n = 0; n < hiddenNeuronCount; n += 2) {
-            f64 value[2] = {0.0};
-            // input * inputWeights
-            for(i32 s = 0; s < inputNeuronCount; s += 2) {
-                value[0] += weights[s] * inputValues[s];
-                value[0] += weights[s+1] * inputValues[s+1];
-                value[1] += weights[s+inputNeuronCount] * inputValues[s];
-                value[1] += weights[s+inputNeuronCount+1] * inputValues[s+1];
-            }
-            // prevSate * prevSateWeights
-            for(i32 s = 0; s < hiddenNeuronCount; s += 2) {
-                value[0] += prevHiddenWeights[s] * prevHiddenValues[s];
-                value[0] += prevHiddenWeights[s+1] * prevHiddenValues[s+1];
-                value[1] += prevHiddenWeights[s+hiddenNeuronCount] * prevHiddenValues[s];
-                value[1] += prevHiddenWeights[s+hiddenNeuronCount+1] * prevHiddenValues[s+1];
-            }
-            value[0] += bias; // bias
-            value[1] += bias; // bias
-            hiddenStateVals[n] = activate(value[0]);
-            hiddenStateVals[n+1] = activate(value[1]);
+        for(i32 l = 1; l < layerCount-1; ++l) {
+            const i32 prevNeuronCount = def->layerNeuronCount[l-1];
+            const i32 hiddenNeuronCount = def->layerNeuronCount[l];
 
-            weights += inputNeuronCount * 2;
-            prevHiddenWeights += hiddenNeuronCount * 2;
+            for(i32 n = 0; n < hiddenNeuronCount; n += 2) {
+                f64 value[2] = {0.0};
+                // input * inputWeights
+                for(i32 s = 0; s < prevNeuronCount; s += 2) {
+                    value[0] += weights[s] * prevLayerVals[s];
+                    value[0] += weights[s+1] * prevLayerVals[s+1];
+                    value[1] += weights[s+prevNeuronCount] * prevLayerVals[s];
+                    value[1] += weights[s+prevNeuronCount+1] * prevLayerVals[s+1];
+                }
+                // prevSate * prevSateWeights
+                for(i32 s = 0; s < hiddenNeuronCount; s += 2) {
+                    value[0] += prevHiddenWeights[s] * prevHiddenValues[s];
+                    value[0] += prevHiddenWeights[s+1] * prevHiddenValues[s+1];
+                    value[1] += prevHiddenWeights[s+hiddenNeuronCount] * prevHiddenValues[s];
+                    value[1] += prevHiddenWeights[s+hiddenNeuronCount+1] * prevHiddenValues[s+1];
+                }
+                value[0] += bias; // bias
+                value[1] += bias; // bias
+                hiddenStateVals[n] = hidden_activate(value[0]);
+                hiddenStateVals[n+1] = hidden_activate(value[1]);
+
+                weights += prevNeuronCount * 2;
+                prevHiddenWeights += hiddenNeuronCount * 2;
+            }
+
+            prevLayerVals += prevNeuronCount;
+            hiddenStateVals += hiddenNeuronCount;
+            prevHiddenValues += hiddenNeuronCount;
         }
 
-        f64 outputTotal = 0;
+        const i32 prevNeuronCount = def->layerNeuronCount[layerCount-2];
+        f64* lastHiddenVals = output - prevNeuronCount;
         for(i32 n = 0; n < outputNeuronCount; n += 2) {
             f64 value[2] = {0.0};
             // hiddenState * outputWeights
-            for(i32 s = 0; s < hiddenNeuronCount; s += 2) {
-                value[0] += weights[s] * hiddenStateVals[s];
-                value[0] += weights[s+1] * hiddenStateVals[s+1];
-                value[1] += weights[s+hiddenNeuronCount] * hiddenStateVals[s];
-                value[1] += weights[s+hiddenNeuronCount+1] * hiddenStateVals[s+1];
+            for(i32 s = 0; s < prevNeuronCount; s += 2) {
+                value[0] += weights[s] * lastHiddenVals[s];
+                value[0] += weights[s+1] * lastHiddenVals[s+1];
+                value[1] += weights[s+prevNeuronCount] * lastHiddenVals[s];
+                value[1] += weights[s+prevNeuronCount+1] * lastHiddenVals[s+1];
             }
             value[0] += bias; // bias
             value[1] += bias; // bias
-            output[n] = exp1(clamp(value[0], -10.0, 10.0));
-            output[n+1] = exp1(clamp(value[1], -10.0, 10.0));
-            outputTotal += output[n];
-            outputTotal += output[n+1];
+            output[n] = output_activate(value[0]);
+            output[n+1] = output_activate(value[1]);
 
-            weights += hiddenNeuronCount * 2;
-        }
-
-        // softmax
-        if(outputTotal == 0) {
-            memset(output, 0, sizeof(output[0]) * outputNeuronCount);
-            output[0] = 1.0;
-        }
-        else {
-            for(i32 n = 0; n < outputNeuronCount; n += 2) {
-                output[n] /= outputTotal;
-                output[n+1] /= outputTotal;
-            }
+            weights += prevNeuronCount * 2;
         }
 
         // "pass on" new hidden state
-        memmove(prevHiddenValues, hiddenStateVals, hiddenNeuronCount * sizeof(hiddenStateVals[0]));
+        hiddenStateVals = nn[i]->values + inputNeuronCount;
+        prevHiddenValues = nn[i]->prevHiddenValues;
+        memmove(prevHiddenValues, hiddenStateVals, hiddenStateNeuronCount * sizeof(hiddenStateVals[0]));
     }
 #else
-    assert((def->layerNeuronCount[0] & 1) == 0);
-    assert((def->layerNeuronCount[1] & 1) == 0);
-    assert((def->layerNeuronCount[2] & 1) == 0);
-
     const w128d bias = wide_f64_set1(def->bias);
     const w128d zero = wide_f64_zero();
+    const w128d one = wide_f64_set1(1.0);
+    const w128d half = wide_f64_set1(0.5);
     const w128d valmax = wide_f64_set1(10.0);
     const w128d valmin = wide_f64_set1(-5.0);
+    const i32 layerCount = def->layerCount;
     const i32 inputNeuronCountHalf = def->inputNeuronCount / 2;
     const i32 outputNeuronCountHalf = def->outputNeuronCount / 2;
-    const i32 hiddenNeuronCountHalf = def->hiddenStateNeuronCount / 2;
+    const i32 hiddenStateNeuronCount = def->hiddenStateNeuronCount;
 
     for(i32 i = 0; i < nnCount; ++i) {
-        w128d* inputValues = nn[i]->wide.values;
+        w128d* prevLayerVals = nn[i]->wide.values;
         w128d* hiddenStateVals = nn[i]->wide.values + inputNeuronCountHalf;
         w128d* weights = nn[i]->wide.weights;
         w128d* prevHiddenValues = nn[i]->wide.prevHiddenValues;
@@ -380,74 +444,71 @@ void rnnPropagateWide(RecurrentNeuralNet** nn, const i32 nnCount, const Recurren
         w128d* output = nn[i]->wide.output;
 
         // compute new hidden state
-        for(i32 n = 0; n < hiddenNeuronCountHalf; n++) {
-            w128d value = wide_f64_zero();
-            // input * inputWeights
-            for(i32 s = 0; s < inputNeuronCountHalf; s++) {
-                value = wide_f64_add(value,
-                                     wide_f64_hadd(wide_f64_mul(weights[s],
-                                                                inputValues[s]),
-                                                   wide_f64_mul((weights+inputNeuronCountHalf)[s],
-                                                                inputValues[s])
-                                                   )
-                                     );
+        for(i32 l = 1; l < layerCount-1; ++l) {
+            const i32 prevNeuronCountHalf = def->layerNeuronCount[l-1] / 2;
+            const i32 hiddenNeuronCountHalf = def->layerNeuronCount[l] / 2;
 
-            }
-            // prevSate * prevSateWeights
-            for(i32 s = 0; s < hiddenNeuronCountHalf; ++s) {
-                value = wide_f64_add(value,
-                                     wide_f64_hadd(wide_f64_mul(prevHiddenWeights[s],
-                                                                prevHiddenValues[s]),
-                                                   wide_f64_mul((prevHiddenWeights+hiddenNeuronCountHalf)[s],
-                                                                prevHiddenValues[s])
-                                                   )
-                                     );
-            }
-            value = wide_f64_add(value, bias); // bias
-            hiddenStateVals[n] = wide_f64_min(wide_f64_max(zero, value), valmax); // activate
+            for(i32 n = 0; n < hiddenNeuronCountHalf; n++) {
+                w128d value = wide_f64_zero();
+                // input * inputWeights
+                for(i32 s = 0; s < prevNeuronCountHalf; s++) {
+                    value = wide_f64_add(value,
+                             wide_f64_hadd(wide_f64_mul(weights[s],
+                                                        prevLayerVals[s]),
+                                           wide_f64_mul((weights+prevNeuronCountHalf)[s],
+                                                        prevLayerVals[s])
+                                           )
+                             );
 
-            weights += inputNeuronCountHalf * 2;
-            prevHiddenWeights += hiddenNeuronCountHalf * 2;
+                }
+                // prevSate * prevSateWeights
+                for(i32 s = 0; s < hiddenNeuronCountHalf; ++s) {
+                    value = wide_f64_add(value,
+                             wide_f64_hadd(wide_f64_mul(prevHiddenWeights[s],
+                                                        prevHiddenValues[s]),
+                                           wide_f64_mul((prevHiddenWeights+hiddenNeuronCountHalf)[s],
+                                                        prevHiddenValues[s])
+                                           )
+                             );
+                }
+                value = wide_f64_add(value, bias); // bias
+                hiddenStateVals[n] = wide_f64_tanh(value); // activate
+
+                weights += prevNeuronCountHalf * 2;
+                prevHiddenWeights += hiddenNeuronCountHalf * 2;
+            }
+
+            prevLayerVals += prevNeuronCountHalf;
+            hiddenStateVals += hiddenNeuronCountHalf;
+            prevHiddenValues += hiddenNeuronCountHalf;
         }
 
-        w128d outputTotal = wide_f64_zero();
+        const i32 prevNeuronCountHalf = def->layerNeuronCount[layerCount-2] / 2;
+        w128d* lastHiddenVals = output - prevNeuronCountHalf;
         for(i32 n = 0; n < outputNeuronCountHalf; ++n) {
             w128d value = wide_f64_zero();
             // hiddenState * outputWeights
-            for(i32 s = 0; s < hiddenNeuronCountHalf; ++s) {
+            for(i32 s = 0; s < prevNeuronCountHalf; ++s) {
                 value = wide_f64_add(value,
                                      wide_f64_hadd(wide_f64_mul(weights[s],
-                                                                hiddenStateVals[s]),
-                                                   wide_f64_mul((weights+hiddenNeuronCountHalf)[s],
-                                                                hiddenStateVals[s])
+                                                                lastHiddenVals[s]),
+                                                   wide_f64_mul((weights+prevNeuronCountHalf)[s],
+                                                                lastHiddenVals[s])
                                                    )
                                      );
             }
             value = wide_f64_add(value, bias); // bias
-            // clamp -10.0, 10.0
-            value = wide_f64_max(value, valmin);
-            value = wide_f64_min(value, valmax);
-            output[n] = wide_f64_exp1(value);
-            outputTotal = wide_f64_add(outputTotal, wide_f64_hadd(output[n], zero));
+            // activate
+            value = wide_f64_tanh(value);
+            output[n] = wide_f64_mul(wide_f64_add(value, one), half);
 
-            weights += hiddenNeuronCountHalf * 2;
-        }
-
-        // softmax
-        f64 fOutTotal = ((f64*)&outputTotal)[0];
-        if(fOutTotal == 0) {
-            memset(output, 0, sizeof(output[0]) * outputNeuronCountHalf);
-            ((f64*)&output[0])[0] = 1.0;
-        }
-        else {
-            w128d invOutputTotal = wide_f64_set1(1.0/fOutTotal);
-            for(i32 n = 0; n < outputNeuronCountHalf; ++n) {
-                output[n] = wide_f64_mul(output[n], invOutputTotal);
-            }
+            weights += prevNeuronCountHalf * 2;
         }
 
         // "pass on" new hidden state
-        memmove(prevHiddenValues, hiddenStateVals, hiddenNeuronCountHalf * sizeof(hiddenStateVals[0]));
+        f64* hiddenStateVals1 = nn[i]->values + inputNeuronCountHalf * 2;
+        f64* prevHiddenValues1 = nn[i]->prevHiddenValues;
+        memmove(prevHiddenValues1, hiddenStateVals1, hiddenStateNeuronCount * sizeof(hiddenStateVals1[0]));
     }
 #endif
 }
@@ -479,6 +540,7 @@ static i32 compareFitnessAsc(const void* a, const void* b)
 
 i32 selectRoulette(const i32 count, f64* fitness, f64 totalFitness)
 {
+    assert(totalFitness > 0);
     f64 r = randf64(0.0, totalFitness);
     f64 s = 0.0;
     for(i32 j = 0; j < count; ++j) {
@@ -670,7 +732,7 @@ void testPropagateNN()
         values[i] += inputs[0] * weights1[i*2];
         values[i] += inputs[1] * weights1[i*2+1];
         values[i] += bias;
-        values[i] = activate(values[i]);
+        values[i] = hidden_activate(values[i]);
     }
 
     f64 outputTotal = 0;
@@ -713,75 +775,112 @@ void testPropagateNN()
 
 void testPropagateRNN()
 {
+    const i32 PASSES = 4;
     assert(exp(-5.0) >= 0.0);
-    f64 inputs[2] = { randf64(0.0, 5.0), randf64(0.0, 5.0) };
+    f64 inputs[2] = { randf64(0.0, 1.0), randf64(0.0, 1.0) };
     f64 hiddenVals[4] = {0};
-    f64 prevHiddenVals[4] = {randf64(0.0, 1.0), randf64(0.0, 1.0)};
-    f64 prevHiddenWeights[4 * 4] = {randf64(0.0, 1.0), randf64(0.0, 1.0),
-                                    randf64(0.0, 1.0), randf64(0.0, 1.0),
-                                    randf64(0.0, 1.0), randf64(0.0, 1.0),
-                                    randf64(0.0, 1.0), randf64(0.0, 1.0),
-                                    randf64(0.0, 1.0), randf64(0.0, 1.0),
-                                    randf64(0.0, 1.0), randf64(0.0, 1.0),
-                                    randf64(0.0, 1.0), randf64(0.0, 1.0),
-                                    randf64(0.0, 1.0), randf64(0.0, 1.0)};
+    f64 hiddenVals2[2] = {0};
+    f64 prevHiddenVals[4] = {randf64(0.0, 1.0), randf64(0.0, 1.0),
+                             randf64(0.0, 1.0), randf64(0.0, 1.0)};
+    f64 prevHiddenVals2[2] = {randf64(0.0, 1.0), randf64(0.0, 1.0)};
+    f64 prevHiddenWeights[4 * 4] = {
+        randf64(0.0, 1.0), randf64(0.0, 1.0), randf64(0.0, 1.0), randf64(0.0, 1.0),
+        randf64(0.0, 1.0), randf64(0.0, 1.0), randf64(0.0, 1.0), randf64(0.0, 1.0),
+        randf64(0.0, 1.0), randf64(0.0, 1.0), randf64(0.0, 1.0), randf64(0.0, 1.0),
+        randf64(0.0, 1.0), randf64(0.0, 1.0), randf64(0.0, 1.0), randf64(0.0, 1.0)};
+
+    f64 prevHiddenWeights2[2 * 2] = {randf64(0.0, 1.0), randf64(0.0, 1.0),
+                                     randf64(0.0, 1.0), randf64(0.0, 1.0)};
     f64 bias = 1.0;
     f64 weights1[4 * 2] = { randf64(0.0, 1.0), randf64(0.0, 1.0),
                             randf64(0.0, 1.0), randf64(0.0, 1.0),
                             randf64(0.0, 1.0), randf64(0.0, 1.0),
                             randf64(0.0, 1.0), randf64(0.0, 1.0)};
-    f64 weights2[2 * 4] = { randf64(0.0, 1.0), randf64(0.0, 1.0),
+
+    f64 weights2[4 * 2] = { randf64(0.0, 1.0), randf64(0.0, 1.0),
                             randf64(0.0, 1.0), randf64(0.0, 1.0),
                             randf64(0.0, 1.0), randf64(0.0, 1.0),
-                            randf64(0.0, 1.0), randf64(0.0, 1.0) };
+                            randf64(0.0, 1.0), randf64(0.0, 1.0)};
+
+    f64 outWeights[2 * 2] = { randf64(0.0, 1.0), randf64(0.0, 1.0),
+                              randf64(0.0, 1.0), randf64(0.0, 1.0)};
     f64 output[2] = {0, 0};
 
-
-    for(i32 i = 0; i < 4; ++i) {
-        hiddenVals[i] += inputs[0] * weights1[i*2];
-        hiddenVals[i] += inputs[1] * weights1[i*2+1];
-        hiddenVals[i] += prevHiddenVals[0] * prevHiddenWeights[i*4];
-        hiddenVals[i] += prevHiddenVals[1] * prevHiddenWeights[i*4+1];
-        hiddenVals[i] += prevHiddenVals[2] * prevHiddenWeights[i*4+2];
-        hiddenVals[i] += prevHiddenVals[3] * prevHiddenWeights[i*4+3];
-        hiddenVals[i] += bias;
-        hiddenVals[i] = activate(hiddenVals[i]);
-    }
-
-    f64 outputTotal = 0;
-    for(i32 i = 0; i < 2; ++i) {
-        output[i] += hiddenVals[0] * weights2[i*4];
-        output[i] += hiddenVals[1] * weights2[i*4+1];
-        output[i] += hiddenVals[2] * weights2[i*4+2];
-        output[i] += hiddenVals[3] * weights2[i*4+3];
-        output[i] += bias;
-        output[i] = exp1(clamp(output[i], -10.0, 10.0));
-        outputTotal += output[i];
-    }
-
-    for(i32 i = 0; i < 2; ++i) {
+    /*for(i32 i = 0; i < 2; ++i) {
         output[i] /= outputTotal;
-    }
+    }*/
 
     RecurrentNeuralNetDef def;
-    const i32 layers[] = {2, 4, 2};
-    rnnMakeDef(&def, sizeof(layers) / sizeof(layers[0]), layers, 1.0);
+    const i32 layers[] = {2, 4, 2, 2};
+    rnnMakeDef(&def, array_count(layers), layers, 1.0);
 
     RecurrentNeuralNet* nn;
     rnnAlloc(&nn, 1, &def);
 
-    assert(def.neuronCount == 8 + 4);
-    assert(def.weightTotalCount == (4 * 2 + 4 * 4 + 2 * 4));
+    assert(def.neuronCount == 10 + 6);
+    assert(def.weightTotalCount == (4 * 2 + 4 * 4 + 4 * 2 + 2 * 2 + 2 * 2));
     memmove(nn->values, inputs, sizeof(inputs));
-    memmove(nn->weights, weights1, sizeof(weights1));
-    memmove(nn->weights + array_count(weights1), weights2, sizeof(weights2));
-    memmove(nn->prevHiddenValues, prevHiddenVals, sizeof(prevHiddenVals));
-    memmove(nn->prevHiddenWeights, prevHiddenWeights, sizeof(prevHiddenWeights));
 
-    rnnPropagate(&nn, 1, &def);
+    f64* nnWeights = nn->weights;
+    memmove(nnWeights, weights1, sizeof(weights1));
+    nnWeights += array_count(weights1);
+    memmove(nnWeights, weights2, sizeof(weights2));
+    nnWeights += array_count(weights2);
+    memmove(nnWeights, outWeights, sizeof(outWeights));
+
+    memmove(nn->prevHiddenValues, prevHiddenVals, sizeof(prevHiddenVals));
+    memmove(nn->prevHiddenValues + array_count(prevHiddenVals), prevHiddenVals2, sizeof(prevHiddenVals2));
+    memmove(nn->prevHiddenWeights, prevHiddenWeights, sizeof(prevHiddenWeights));
+    memmove(nn->prevHiddenWeights + array_count(prevHiddenWeights),
+            prevHiddenWeights2, sizeof(prevHiddenWeights2));
+
+
+    for(i32 p = 0; p < PASSES; ++p) {
+        for(i32 i = 0; i < 4; ++i) {
+            f64 value = 0.0;
+            value += inputs[0] * weights1[i*2];
+            value += inputs[1] * weights1[i*2+1];
+            value += prevHiddenVals[0] * prevHiddenWeights[i*4];
+            value += prevHiddenVals[1] * prevHiddenWeights[i*4+1];
+            value += prevHiddenVals[2] * prevHiddenWeights[i*4+2];
+            value += prevHiddenVals[3] * prevHiddenWeights[i*4+3];
+            value += bias;
+            hiddenVals[i] = hidden_activate(value);
+        }
+
+        for(i32 i = 0; i < 2; ++i) {
+            f64 value = 0.0;
+            value += hiddenVals[0] * weights2[i*4];
+            value += hiddenVals[1] * weights2[i*4+1];
+            value += hiddenVals[2] * weights2[i*4+2];
+            value += hiddenVals[3] * weights2[i*4+3];
+            value += prevHiddenVals2[0] * prevHiddenWeights2[i*2];
+            value += prevHiddenVals2[1] * prevHiddenWeights2[i*2+1];
+            value += bias;
+            hiddenVals2[i] = hidden_activate(value);
+        }
+
+        for(i32 i = 0; i < 2; ++i) {
+            f64 value = 0.0;
+            value += hiddenVals2[0] * outWeights[i*2];
+            value += hiddenVals2[1] * outWeights[i*2+1];
+            value += bias;
+            output[i] = output_activate(value);
+        }
+
+        memmove(prevHiddenVals, hiddenVals, sizeof(hiddenVals));
+        memmove(prevHiddenVals2, hiddenVals2, sizeof(hiddenVals2));
+    }
+
+    for(i32 p = 0; p < PASSES; ++p) {
+        rnnPropagate(&nn, 1, &def);
+    }
 
     for(i32 i = 0; i < 4; ++i) {
         assert(fabs(nn->values[2 + i] - hiddenVals[i]) < 0.0001);
+    }
+    for(i32 i = 0; i < 2; ++i) {
+        assert(fabs(nn->values[6 + i] - hiddenVals2[i]) < 0.0001);
     }
     assert(fabs(nn->output[0] - output[0]) < 0.0001);
     assert(fabs(nn->output[1] - output[1]) < 0.0001);
@@ -791,39 +890,67 @@ void testPropagateRNN()
 
 void testPropagateRNNWide()
 {
+    const i32 PASSES = 3;
     RecurrentNeuralNetDef def;
-    const i32 layers[] = {8, 16, 4};
+    const i32 layers[] = {2, 4, 6, 2};
     rnnMakeDef(&def, array_count(layers), layers, 1.0);
 
     RecurrentNeuralNet* nn[2];
     rnnAlloc(nn, 2, &def);
 
+    assert((intptr_t)nn[1] - (intptr_t)nn[0] == def.neuralNetSize);
+
     rnnInitRandom(&nn[0], 1, &def);
-    nn[0]->values[0] = randf64(0, 1.0);
-    nn[0]->values[1] = randf64(0, 1.0);
-    nn[0]->values[2] = randf64(0, 1.0);
-    nn[0]->values[3] = randf64(0, 1.0);
-    nn[0]->values[4] = randf64(0, 1.0);
-    nn[0]->values[5] = randf64(0, 1.0);
-    nn[0]->values[6] = randf64(0, 1.0);
-    nn[0]->values[7] = randf64(0, 1.0);
+    nn[0]->values[0] = randf64(0, 5.0);
+    nn[0]->values[1] = randf64(0, 5.0);
 
-    memmove(nn[1], nn[0], def.neuralNetSize);
+    rnnCopy(nn[1], nn[0], &def);
 
-    rnnPropagate(&nn[0], 1, &def);
-    rnnPropagateWide(&nn[1], 1, &def);
+    for(i32 p = 0; p < PASSES; ++p) {
+        rnnPropagate(&nn[0], 1, &def);
+        rnnPropagateWide(&nn[1], 1, &def);
+    }
 
     for(i32 i = 0; i < def.neuronCount; ++i) {
-        assert(fabs(nn[0]->values[i] - nn[1]->values[i]) < 0.0001);
+        LOG("val[%d] = %.6f val2[%d] = %.6f", i, nn[0]->values[i], i, nn[1]->values[i]);
+        assert(fabs(nn[0]->values[i] - nn[1]->values[i]) < 0.01);
     }
 
     rnnDealloc(nn[0]);
 }
 
+void testWideTanh()
+{
+    constexpr i32 TEST_COUNT = 16;
+    f64 input[TEST_COUNT];
+    w128d winput[TEST_COUNT/2];
+
+    for(i32 i = 0; i < TEST_COUNT; ++i) {
+        input[i] = randf64(-5.0, 5.0);
+    }
+
+    memmove(winput, input, sizeof(winput));
+
+    for(i32 i = 0; i < TEST_COUNT; ++i) {
+        input[i] = tanh(input[i]);
+    }
+
+    for(i32 i = 0; i < TEST_COUNT/2; ++i) {
+        winput[i] = wide_f64_tanh(winput[i]);
+    }
+
+    f64* notWinput = (f64*)winput;
+
+    for(i32 i = 0; i < TEST_COUNT; ++i) {
+        LOG("val[%d] = %.6f val2[%d] = %.6f", i, input[i], i, notWinput[i]);
+        assert(fabs(input[i] - notWinput[i]) < 0.01);
+    }
+}
+
 void generateSpeciesTags(u8* tags, const i32 tagCount, const i32 bitCount)
 {
     for(i32 i = 0; i < tagCount; ++i) {
-        tags[i] = randf64(0, (1 << bitCount)-1);
+        tags[i] = randi64(0, (1 << bitCount)-1);
     }
 }
 
@@ -841,11 +968,11 @@ void evolutionSSS1(GeneticEnvRnn* env)
     const i32 weightTotalCount = env->rnnDef->weightTotalCount;
     const i32 neuralNetSize = env->rnnDef->neuralNetSize;
 
-    i32* subPopIndivCount = alloc_arr(i32,SUBPOP_MAX_COUNT);
+    i32* subPopIndivCount = stack_arr(i32,SUBPOP_MAX_COUNT);
     memset(subPopIndivCount, 0, SUBPOP_MAX_COUNT * sizeof(i32));
-    f64* normFitness = alloc_arr(f64,POP_COUNT);
+    f64* normFitness = stack_arr(f64,POP_COUNT);
     const i32 parentCount = POP_COUNT * 0.3;
-    i32* parents = alloc_arr(i32,parentCount);
+    i32* parents = stack_arr(i32,parentCount);
 
     for(i32 i = 0; i < POP_COUNT; ++i) {
         u8 tag = curPopTag[i];
@@ -861,7 +988,7 @@ void evolutionSSS1(GeneticEnvRnn* env)
 
     // select parents
     i32 rouletteMisses = 0;
-    u8* chosenAsParent = alloc_arr(u8,POP_COUNT);
+    u8* chosenAsParent = stack_arr(u8,POP_COUNT);
     memset(chosenAsParent, 0, sizeof(u8)*POP_COUNT);
     for(i32 p = 0; p < parentCount; ++p) {
         i32 tries = 200;
@@ -881,8 +1008,8 @@ void evolutionSSS1(GeneticEnvRnn* env)
     }
 
     i32 noMatesFoundCount = 0;
-    RecurrentNeuralNet** potentialMates = alloc_arr(RecurrentNeuralNet*,parentCount);
-    f64* pmFitness = alloc_arr(f64,parentCount);
+    RecurrentNeuralNet** potentialMates = stack_arr(RecurrentNeuralNet*,parentCount);
+    f64* pmFitness = stack_arr(f64,parentCount);
 
     for(i32 i = 0; i < POP_COUNT; ++i) {
         const i32 parentA = randi64(0, parentCount-1);
@@ -997,4 +1124,76 @@ void ImGui_RecurrentNeuralNet(RecurrentNeuralNet* nn, RecurrentNeuralNetDef* def
         ImVec2 offset(column * cellSize.x, line * cellSize.y);
         ImGui::RenderFrame(pos + offset, pos + offset + cellSize, color, false, 0);
     }
+}
+
+void ImGui_SubPopWindow(const GeneticEnvRnn* env, const ImVec4* subPopColors)
+{
+    const i32 POP_COUNT = env->populationCount;
+    const i32 SUBPOP_MAX_COUNT = 1 << env->speciesBits;
+    const u8* curSpeciesTag = env->curSpeciesTags;
+    const f64* fitness = env->fitness;
+
+    f64* totalFitness = stack_arr(f64,SUBPOP_MAX_COUNT);
+    f64* maxFitness = stack_arr(f64,SUBPOP_MAX_COUNT);
+    f64* avgFitness = stack_arr(f64,SUBPOP_MAX_COUNT);
+    i32* subPopIndivCount = stack_arr(i32,SUBPOP_MAX_COUNT);
+    zero_arr(maxFitness,SUBPOP_MAX_COUNT);
+    zero_arr(totalFitness,SUBPOP_MAX_COUNT);
+    zero_arr(avgFitness,SUBPOP_MAX_COUNT);
+    zero_arr(subPopIndivCount,SUBPOP_MAX_COUNT);
+    f64 maxTotal = 0;
+    f64 maxMaxFitness = 0;
+    f64 maxAvg = 0;
+    i32 maxCount = 0;
+
+    for(i32 i = 0; i < POP_COUNT; ++i) {
+        maxFitness[curSpeciesTag[i]] = max(fitness[i], maxFitness[curSpeciesTag[i]]);
+        totalFitness[curSpeciesTag[i]] += fitness[i];
+        subPopIndivCount[curSpeciesTag[i]]++;
+    }
+    for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
+        maxTotal = max(totalFitness[i], maxTotal);
+        maxMaxFitness = max(maxFitness[i], maxMaxFitness);
+        avgFitness[i] = totalFitness[i]/subPopIndivCount[i];
+        maxAvg = max(avgFitness[i], maxAvg);
+        maxCount = max(subPopIndivCount[i], maxCount);
+    }
+
+    ImGui::Begin("Sub populations");
+
+    if(ImGui::CollapsingHeader("Population count")) {
+        for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, subPopColors[i]);
+            char buff[64];
+            sprintf(buff, "%d", subPopIndivCount[i]);
+            ImGui::ProgressBar(subPopIndivCount[i]/(f32)maxCount, ImVec2(-1,0), buff);
+            ImGui::PopStyleColor(1);
+        }
+    }
+
+    if(ImGui::CollapsingHeader("Total fitness")) {
+        for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, subPopColors[i]);
+            ImGui::ProgressBar(totalFitness[i]/maxTotal);
+            ImGui::PopStyleColor(1);
+        }
+    }
+
+    if(ImGui::CollapsingHeader("Average fitness")) {
+        for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, subPopColors[i]);
+            ImGui::ProgressBar(avgFitness[i]/maxAvg);
+            ImGui::PopStyleColor(1);
+        }
+    }
+
+    if(ImGui::CollapsingHeader("Max fitness")) {
+        for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, subPopColors[i]);
+            ImGui::ProgressBar(maxFitness[i]/maxMaxFitness);
+            ImGui::PopStyleColor(1);
+        }
+    }
+
+    ImGui::End();
 }

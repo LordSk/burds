@@ -50,7 +50,7 @@ constexpr i32 SUBPOP_MAX_COUNT = 1 << BIRD_TAG_BITS;
 #define REINSERT_DUPLICATE 0x2
 #define REINSERT_STRATEGY REINSERT_TRUNCATE
 
-#define NEURAL_NET_LAYERS { 4, 12, 4 }
+#define NEURAL_NET_LAYERS { 4, 10, 4 }
 
 #define STATS_HISTORY_COUNT 30
 
@@ -133,6 +133,9 @@ struct ImGuiGLSetup* ims;
 i32 timeScale;
 
 i32 dbgViewerBirdId = 0;
+bool dbgShowObjLines = true;
+bool dbgHightlightBird = true;
+bool dbgFollowBird = false;
 
 struct GenerationStats {
     i32 number = 0;
@@ -261,6 +264,13 @@ void resetApplePath()
     }
 }
 
+void resetView()
+{
+    viewX = -2000;
+    viewY = -1000;
+    viewZoom = 3.f;
+}
+
 void resetSimulation()
 {
     generateSpeciesTags(curSpeciesTag, BIRD_COUNT, BIRD_TAG_BITS);
@@ -270,6 +280,7 @@ void resetSimulation()
 
     generationNumber = 0;
     curGenStats = {};
+    memset(pastGenStats, 0, sizeof(pastGenStats));
     rnnInitRandom(curGenNN, BIRD_COUNT, &nnDef);
 
     /*const i32 weightTotalCount = nnDef.weightTotalCount;
@@ -367,8 +378,6 @@ void run()
         while(SDL_PollEvent(&event)) {
             handleEvent(&event);
         }
-
-        updateCamera();
 
         newFrame();
         render();
@@ -525,6 +534,7 @@ void ui_birdViewer()
 
     ImGui::Text("Bird_%04d [%03X]", dbgViewerBirdId, curSpeciesTag[dbgViewerBirdId]);
     ImGui::TextColored(ImVec4(0, 1, 0, 1), "fitness: %g", birdFitness[dbgViewerBirdId]);
+    ImGui::TextColored(ImVec4(1, 0.5, 0, 1), "apples: %d", birdAppleEatenCount[dbgViewerBirdId]);
 
     ImGui::Separator();
 
@@ -589,67 +599,34 @@ void ui_generationViewer()
 
 void ui_subPopulations()
 {
-    f64 totalFitness[SUBPOP_MAX_COUNT] = {0};
-    f64 maxFitness[SUBPOP_MAX_COUNT] = {0};
-    f64 avgFitness[SUBPOP_MAX_COUNT] = {0};
-    i32 subPopIndivCount[SUBPOP_MAX_COUNT] = {0};
-    f64 maxTotal = 0;
-    f64 maxMaxFitness = 0;
-    f64 maxAvg = 0;
-    i32 maxCount = 0;
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        maxFitness[curSpeciesTag[i]] = max(birdFitness[i], maxFitness[curSpeciesTag[i]]);
-        totalFitness[curSpeciesTag[i]] += birdFitness[i];
-        subPopIndivCount[curSpeciesTag[i]]++;
-    }
-    for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
-        maxTotal = max(totalFitness[i], maxTotal);
-        maxMaxFitness = max(maxFitness[i], maxMaxFitness);
-        avgFitness[i] = totalFitness[i]/subPopIndivCount[i];
-        maxAvg = max(avgFitness[i], maxAvg);
-        maxCount = max(subPopIndivCount[i], maxCount);
-    }
-
     ImVec4 subPopColors[SUBPOP_MAX_COUNT];
     for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
         Color3 sc = speciesColor[i];
         subPopColors[i] = ImVec4(sc.r/255.f, sc.g/255.f, sc.b/255.f, 1.f);
     }
 
-    ImGui::Begin("Sub populations");
+    ImGui_SubPopWindow(&env, subPopColors);
+}
 
-    if(ImGui::CollapsingHeader("Population count")) {
-        for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
-            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, subPopColors[i]);
-            char buff[64];
-            sprintf(buff, "%d", subPopIndivCount[i]);
-            ImGui::ProgressBar(subPopIndivCount[i]/(f32)maxCount, ImVec2(-1,0), buff);
-            ImGui::PopStyleColor(1);
-        }
+void ui_simOptions()
+{
+    ImGui::Begin("Simulation");
+
+    ImGui::SliderInt("time scale", &timeScale, 1, 20);
+    ImGui::Checkbox("Show objective lines", &dbgShowObjLines);
+    ImGui::Checkbox("Highlight bird", &dbgHightlightBird);
+    ImGui::Checkbox("Follow bird", &dbgFollowBird);
+
+    ImGui::Separator();
+
+    if(ImGui::Button("Reset view")) {
+        resetView();
     }
 
-    if(ImGui::CollapsingHeader("Total fitness")) {
-        for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
-            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, subPopColors[i]);
-            ImGui::ProgressBar(totalFitness[i]/maxTotal);
-            ImGui::PopStyleColor(1);
-        }
-    }
+    ImGui::SameLine();
 
-    if(ImGui::CollapsingHeader("Average fitness")) {
-        for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
-            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, subPopColors[i]);
-            ImGui::ProgressBar(avgFitness[i]/maxAvg);
-            ImGui::PopStyleColor(1);
-        }
-    }
-
-    if(ImGui::CollapsingHeader("Max fitness")) {
-        for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
-            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, subPopColors[i]);
-            ImGui::ProgressBar(maxFitness[i]/maxMaxFitness);
-            ImGui::PopStyleColor(1);
-        }
+    if(ImGui::Button("Reset simulation")) {
+        resetSimulation();
     }
 
     ImGui::End();
@@ -659,12 +636,7 @@ void doUI()
 {
     ImGui::StyleColorsDark();
 
-    ImGui::Begin("Timescale");
-
-    ImGui::SliderInt("scale", &timeScale, 1, 10);
-
-    ImGui::End();
-
+    ui_simOptions();
     ui_birdViewer();
     ui_generationViewer();
     ui_subPopulations();
@@ -673,6 +645,14 @@ void doUI()
 
 void updateNNs()
 {
+    RecurrentNeuralNet* aliveNN[BIRD_COUNT];
+    i32 aliveCount = 0;
+
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        if(birdDead[i]) continue;
+        aliveNN[aliveCount++] = curGenNN[i];
+    }
+
     // setup neural net inputs
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         Vec2 applePos = applePosList[birdApplePositionId[i]];
@@ -702,8 +682,7 @@ void updateNNs()
         curGenNN[i]->values[3] = vec2Len(&diff) / 3000.0;
     }
 
-    rnnPropagate(curGenNN, BIRD_COUNT, &nnDef);
-    //rnnPropagateWide(curGenNN, BIRD_COUNT, &nnDef);
+    rnnPropagate(aliveNN, aliveCount, &nnDef);
 
     // get neural net output
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
@@ -783,17 +762,24 @@ void updateMechanics()
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         if(birdDead[i]) continue;
         f64 applesFactor = birdAppleEatenCount[i];
-        f64 shortDistFactor = APPLE_RADIUS / birdShortestDistToNextApple[i]; // 0.0 -> 1.0
+        f64 shortDistFactor = APPLE_RADIUS / min(birdShortestDistToNextApple[i], 5000); // 0.0 -> 1.0
         f64 longDistFactor = birdLongestDistToNextApple[i] / 5000.0; // 0.0 -> inf
         f64 deathDistFactor = APPLE_RADIUS * 1000.0 / vec2Distance(&birdPos[i],
                               &appleTf[i].pos); // 0.0 -> 1.0
-        f64 distFactor = APPLE_RADIUS / vec2Distance(&birdPos[i], &appleTf[i].pos); // 0.0 -> 1.0
-        f64 healthFactor = birdMaxHealthAchieved[i] / HEALTH_MAX - 1.0f;
+        f64 distFactor = APPLE_RADIUS / min(vec2Distance(&birdPos[i], &appleTf[i].pos), 5000); // 0.0 -> 1.0
         f64 avgDistFactor = (birdDistToNextAppleSum[i] / birdDistCheckCount[i]) /
                             5000.0;
+        Vec2 nVel = vec2Normalize(&birdVel[i]);
+        Vec2 diff = vec2Minus(&appleTf[i].pos, &birdPos[i]);
+        Vec2 nDiff = vec2Normalize(&diff);
+
+        f64 distFactor3 = (distFactor * distFactor * distFactor);
+        f64 dot = (vec2Dot(&nVel, &nDiff) + 1.0) * 0.5;
 
         //birdFitness[i] += applesFactor * 2.0 + (distFactor * distFactor * distFactor);
-        birdFitness[i] += applesFactor * 2.0 + distFactor * shortDistFactor;
+        //birdFitness[i] += applesFactor * 2.0 + dot + shortDistFactor;
+        f64 healthFactor = birdHealth[i]/HEALTH_MAX * (applesFactor > 0.0);
+        birdFitness[i] += applesFactor * 2.0 + (shortDistFactor * distFactor);
         /*birdFitness[i] += applesFactor * 2.0 + distFactor * 0.2 +
                 (1.0 - birdHealth[i]/HEALTH_MAX) * distFactor;*/
 
@@ -971,6 +957,7 @@ void updatePhysics()
             birdPos[i].y = GROUND_Y;
             birdVel[i].x = 0;
             birdVel[i].y = 0;
+            birdDead[i] = 1;
             //birdAngularVel[i] = 0;
         }
     }
@@ -1028,6 +1015,13 @@ void newFrame()
 {
     imguiUpdate(ims);
     doUI();
+
+    if(dbgFollowBird) {
+        viewX = birdPos[dbgViewerBirdId].x - WINDOW_WIDTH * viewZoom * 0.5;
+        viewY = birdPos[dbgViewerBirdId].y - WINDOW_HEIGHT * viewZoom * 0.5;
+    }
+
+    updateCamera();
 
     if(mode == MODE_NN_TRAIN) {
         updateNNs();
@@ -1107,7 +1101,9 @@ void render()
 
     drawQuadBatch(&groundQuad, 1);
 
-    drawLineBatch(targetLine, BIRD_COUNT);
+    if(dbgShowObjLines) {
+        drawLineBatch(targetLine, BIRD_COUNT);
+    }
 
     drawSpriteBatch(tex_birdWing, birdLeftWingTf, birdColor, BIRD_COUNT);
     drawSpriteBatch(tex_birdWing, birdRightWingTf, birdColor, BIRD_COUNT);
@@ -1126,6 +1122,15 @@ void render()
     Color3 red = {255, 0, 0};
 
     drawSpriteBatch(tex_apple, &pr, &red, 1);*/
+
+    if(dbgHightlightBird) {
+        f32 halfSize = 50;
+        Vec2 hlPos = birdPos[dbgViewerBirdId];
+        Quad hlQuad = quadOneColor(hlPos.x - halfSize, hlPos.x + halfSize,
+                                   hlPos.y - halfSize, hlPos.y + halfSize,
+                                   {255, 0, 0, 128});
+        drawQuadBatch(&hlQuad, 1);
+    }
 
     imguiRender();
 }
@@ -1147,10 +1152,10 @@ i32 main()
 {
     LOG("Burds");
 
-    testPropagateNN();
-
     randSetSeed(time(NULL));
     timeInit();
+
+    testPropagateRNN();
 
     SDL_SetMainReady();
     i32 sdl = SDL_Init(SDL_INIT_VIDEO);

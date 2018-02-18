@@ -32,7 +32,10 @@ constexpr i32 MAP_WATER_AVG_SIZE = MAP_WATER_AVG_WIDTH*MAP_WATER_AVG_HEIGHT;
 #define MAP_POND_MIN_RADIUS 12
 #define MAP_POND_MAX_RADIUS 40
 
-#define FROG_COUNT 1024
+#define FROG_COUNT 512
+#define FROG_TAG_BITS 3
+constexpr i32 SUBPOP_MAX_COUNT = 1 << FROG_TAG_BITS;
+
 #define FROG_SIZE 60.0f
 #define FROG_SPEED 400.0f
 #define FROG_ANIM_JUMP 300
@@ -40,7 +43,6 @@ constexpr i32 MAP_WATER_AVG_SIZE = MAP_WATER_AVG_WIDTH*MAP_WATER_AVG_HEIGHT;
 #define FROG_JUMP_CD 450
 #define FROG_TONGUE_CD 300
 #define FROG_WATER_SENSOR_OFFSET (FROG_SIZE + 100.f)
-#define FROG_TAG_BITS 7
 
 #define ENERGY_TOTAL 100.0f
 #define ENERGY_JUMP_DRAIN 2.0f
@@ -53,6 +55,8 @@ constexpr i32 MAP_WATER_AVG_SIZE = MAP_WATER_AVG_WIDTH*MAP_WATER_AVG_HEIGHT;
 #define STATS_HISTORY_COUNT 30
 
 #define SIMULATION_MAX_TIME 90.0
+
+#define NEURAL_NET_LAYERS { 6, 10, 2 }
 
 //#define VISION_WIDTH 32 // is a square
 
@@ -117,7 +121,7 @@ i32 tex_frog[FROG_TEX_COUNT];
 Vec2 frogPos[FROG_COUNT];
 f32 frogAngle[FROG_COUNT];
 Transform frogTf[FROG_COUNT];
-Color3 frogColor[FROG_COUNT];
+Color3 speciesColor[FROG_COUNT];
 u8 frogTexId[FROG_COUNT]; // still, jump, tongue
 FrogInput frogInput[FROG_COUNT];
 f64 frogJumpTime[FROG_COUNT];
@@ -163,6 +167,9 @@ GenerationStats pastGenStats[STATS_HISTORY_COUNT];
 
 f64 outMin = 1.0;
 f64 outMax = 0.0;
+
+GeneticEnvRnn geneticEnv = { FROG_COUNT, FROG_TAG_BITS, curSpeciesTag, nextSpeciesTag,
+                           curGenNN, nextGenNN, &nnDef, frogFitness};
 
 bool init()
 {
@@ -227,19 +234,9 @@ bool init()
     resetMap();
     resetFrogColors();
 
-    /*const i32 layers[] = {
-        4 + 4, // "water smell" corners, closest pond factor, angle, hydration, energy
-        8,
-        2 // angle, action
-    };*/
+    const i32 layers[] = NEURAL_NET_LAYERS;
 
-    const i32 layers[] = {
-        6,
-        4,
-        2 // angle, action
-    };
-
-    rnnMakeDef(&nnDef, sizeof(layers)/sizeof(layers[0]), layers, 1.0);
+    rnnMakeDef(&nnDef, array_count(layers), layers, 1.0);
     rnnAlloc(curGenNN, FROG_COUNT, &nnDef);
     rnnAlloc(nextGenNN, FROG_COUNT, &nnDef);
 
@@ -514,7 +511,7 @@ void resetFrogColors()
         c.r = (xorshift64star() % colorDelta) + colorMin;
         c.g = (xorshift64star() % colorDelta) + colorMin;
         c.b = (xorshift64star() % colorDelta) + colorMin;
-        frogColor[i] = c;
+        speciesColor[i] = c;
     }
 }
 
@@ -554,7 +551,7 @@ void resetFrogs()
 void resetFrogSpecies()
 {
     for(i32 i = 0; i < FROG_COUNT; ++i) {
-        curSpeciesTag[i] = randf64(0, (1 << FROG_TAG_BITS)-1);
+        curSpeciesTag[i] = randi64(0, (1 << FROG_TAG_BITS)-1);
     }
 }
 
@@ -562,7 +559,10 @@ void resetSimulation()
 {
     resetFrogSpecies();
     resetFrogs();
+
     generationNumber = 0;
+    curGenStats = {};
+    memset(pastGenStats, 0, sizeof(pastGenStats));
     rnnInitRandom(curGenNN, FROG_COUNT, &nnDef);
 }
 
@@ -660,8 +660,8 @@ void ui_championViewer()
         }
     }
 
-    ImVec4 frogCol(frogColor[dbgViewerFrogId].r/255.f, frogColor[dbgViewerFrogId].g/255.f,
-                   frogColor[dbgViewerFrogId].b/255.f, 1);
+    ImVec4 frogCol(speciesColor[dbgViewerFrogId].r/255.f, speciesColor[dbgViewerFrogId].g/255.f,
+                   speciesColor[dbgViewerFrogId].b/255.f, 1);
 
     ImGui::Text("Frog_%d", dbgViewerFrogId);
     ImGui::TextColored(ImVec4(0, 1, 0, 1), "fitness: %g", frogFitness[dbgViewerFrogId]);
@@ -744,6 +744,48 @@ void ui_debug()
     ImGui::End();
 }
 
+void ui_subPopulations()
+{
+    ImVec4 subPopColors[SUBPOP_MAX_COUNT];
+    for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
+        Color3 sc = speciesColor[i];
+        subPopColors[i] = ImVec4(sc.r/255.f, sc.g/255.f, sc.b/255.f, 1.f);
+    }
+
+    ImGui_SubPopWindow(&geneticEnv, subPopColors);
+}
+
+void ui_lastGeneration()
+{
+    // last generation statistics window
+    ImGui::Begin("Last generation");
+
+    ImGui::Text("Generation %d", lastGenStats.number);
+    ImGui::Separator();
+
+    ImGui::TextColored(ImVec4(0, 1, 0, 1), "Fitness max: %g", lastGenStats.maxFitness);
+    ImGui::Text("Fitness avg: %g", lastGenStats.avgFitness);
+
+    ImGui::TextColored(ImVec4(0.8, 0.8, 0.8, 1), "Deaths by border: %d", lastGenStats.deathsByBorder);
+    ImGui::TextColored(ImVec4(0, 0.8, 1, 1), "Deaths by dehydration: %d",
+                       lastGenStats.deathsByDehydratation);
+
+    ImGui::Separator();
+
+    f32 pastFitness[STATS_HISTORY_COUNT];
+    f32 maxPastFitness = 0;
+    for(i32 i = 0; i < STATS_HISTORY_COUNT; ++i) {
+        pastFitness[i] = pastGenStats[i].avgFitness;
+        maxPastFitness = max(maxPastFitness, pastFitness[i]);
+    }
+
+    ImGui::PushItemWidth(180.0f);
+    ImGui::PlotLines("##max_fitness", pastFitness, IM_ARRAYSIZE(pastFitness),
+                         0, NULL, 0.0f, maxPastFitness, ImVec2(0,50));
+
+    ImGui::End();
+}
+
 void doUI()
 {
     ImGui::StyleColorsDark();
@@ -775,36 +817,9 @@ void doUI()
     ImGui::End();
 
     ui_debug();
-
     ui_championViewer();
-
-    // last generation statistics window
-    ImGui::Begin("Last generation");
-
-    ImGui::Text("Generation %d", lastGenStats.number);
-    ImGui::Separator();
-
-    ImGui::TextColored(ImVec4(0, 1, 0, 1), "Fitness max: %g", lastGenStats.maxFitness);
-    ImGui::Text("Fitness avg: %g", lastGenStats.avgFitness);
-
-    ImGui::TextColored(ImVec4(0.8, 0.8, 0.8, 1), "Deaths by border: %d", lastGenStats.deathsByBorder);
-    ImGui::TextColored(ImVec4(0, 0.8, 1, 1), "Deaths by dehydration: %d",
-                       lastGenStats.deathsByDehydratation);
-
-    ImGui::Separator();
-
-    f32 pastFitness[STATS_HISTORY_COUNT];
-    f32 maxPastFitness = 0;
-    for(i32 i = 0; i < STATS_HISTORY_COUNT; ++i) {
-        pastFitness[i] = pastGenStats[i].avgFitness;
-        maxPastFitness = max(maxPastFitness, pastFitness[i]);
-    }
-
-    ImGui::PushItemWidth(180.0f);
-    ImGui::PlotLines("##max_fitness", pastFitness, IM_ARRAYSIZE(pastFitness),
-                         0, NULL, 0.0f, maxPastFitness, ImVec2(0,50));
-
-    ImGui::End();
+    ui_subPopulations();
+    ui_lastGeneration();
 
     //ImGui::ShowDemoWindow();
 }
@@ -933,7 +948,6 @@ void updateNNs()
         }
         else {
             frogClosestPondFactor[i] = 1.0 / minDist;
-            frogClosestPondFactor[i] = 1.0 / (minDist / ((MAP_WIDTH + MAP_HEIGHT) * TILE_SIZE));
         }
     }
 
@@ -991,7 +1005,6 @@ void updateNNs()
     //rnnPropagate(nnets, nnetsCount, &nnDef);
     rnnPropagateWide(nnets, nnetsCount, &nnDef);
 
-
     for(i32 i = 0; i < FROG_COUNT; ++i) {
         if(frogDead[i]) continue;
         f64* output = curGenNN[i]->output;
@@ -1041,6 +1054,8 @@ void updatePhysics()
 
 void updateMechanics()
 {
+    i32 frogRewards[FROG_COUNT] = {0};
+
     for(i32 i = 0; i < FROG_COUNT; ++i) {
         if(frogDead[i]) continue;
 
@@ -1048,7 +1063,6 @@ void updateMechanics()
         if(frogHydration[i] <= 0) {
             frogHydration[i] = 0;
             frogDead[i] = true;
-            frogFitness[i] *= 0.5; // punish frogs that die of dehydration
             curGenStats.deathsByDehydratation++;
         }
     }
@@ -1115,11 +1129,18 @@ void updateMechanics()
         if(mapData[my * MAP_WIDTH + mx] == MAP_TILE_WATER) {
             frogHydration[i] += HYDRATION_GAIN_PER_SEC * FRAME_DT;
             frogHydration[i] = min(frogHydration[i], HYDRATION_TOTAL);
+            frogRewards[i] += 1;
         }
         /*else if(mapData[my * MAP_WIDTH + mx] == MAP_TILE_DEATH) {
             frogDead[i] = true;
             curGenStats.deathsByBorder++;
         }*/
+    }
+
+    for(i32 i = 0; i < FROG_COUNT; ++i) {
+        if(frogClosestPondFactorOffsetSign[i] > 0) {
+            frogRewards[i] += 1;
+        }
     }
 
     simulationTime += FRAME_DT;
@@ -1128,8 +1149,9 @@ void updateMechanics()
         if(frogDead[i]) continue;
 
         //frogFitness[i] += FRAME_DT;
-        frogFitness[i] += frogHydration[i] / HYDRATION_TOTAL;
-        frogFitness[i] += (frogEnergy[i] / ENERGY_TOTAL) * 0.5;
+        frogFitness[i] += frogRewards[i];
+        //frogFitness[i] += frogHydration[i] / HYDRATION_TOTAL;
+        //frogFitness[i] += (frogEnergy[i] / ENERGY_TOTAL) * 0.5;
         //frogFitness[i] += frogFliesEatenCount;
 
         if(simulationTime >= SIMULATION_MAX_TIME) {
@@ -1163,84 +1185,10 @@ void newGeneration()
     curGenStats = {};
     curGenStats.number = generationNumber++;
 
-    LOG("#%d maxFitness=%.5f avg=%.5f", lastGenStats.number,
-        lastGenStats.maxFitness, lastGenStats.avgFitness);
+    LOG("#%d maxFitness=%.5f avg=%.5f", lastGenStats.number, lastGenStats.maxFitness,
+        lastGenStats.avgFitness);
 
-    i32 reinsertCount = reinsertTruncateRNNSpecies(FROG_COUNT*0.1, FROG_COUNT, frogFitness,
-                                    nextGenNN, curGenNN, &nnDef, curSpeciesTag, nextSpeciesTag);
 
-    const i32 tournamentSize = 15;
-
-#if 0
-    // cross over
-    for(i32 i = reinsertCount; i < FROG_COUNT; ++i) {
-        i32 parentA = selectTournament(FROG_COUNT, tournamentSize, -1, frogFitness);
-        i32 parentB = selectTournament(FROG_COUNT, tournamentSize, parentA, frogFitness);
-        crossover(nextGenNN[i]->weights, curGenNN[parentA]->weights, curGenNN[parentB]->weights,
-                  nnDef.weightTotalCount);
-    }
-#endif
-
-    i32 crossoverMisses = 0;
-    // cross over
-    for(i32 i = reinsertCount; i < FROG_COUNT; ++i) {
-        i32 parentA = selectTournament(FROG_COUNT, 20, -1, frogFitness);
-        const u8 parentATag = curSpeciesTag[parentA];
-        i32 parentB = selectTournamentSpecies(FROG_COUNT, 1000, parentA, frogFitness, curSpeciesTag,
-                                              parentATag);
-        crossover(nextGenNN[i]->weights, curGenNN[parentA]->weights, curGenNN[parentB]->weights,
-                  nnDef.weightTotalCount);
-        if(curSpeciesTag[parentB] != parentATag) {
-            crossoverMisses++;
-        }
-        nextSpeciesTag[i] = curSpeciesTag[parentB];
-    }
-
-    LOG("crossover misses: %d", crossoverMisses);
-
-    // mutate
-    const f32 mutationRate = 0.005f;
-    i32 mutationCount = 0;
-    const i32 weightTotalCount = nnDef.weightTotalCount;
-    for(i32 i = 0; i < reinsertCount; ++i) {
-        f64 factor = ((f64)i/reinsertCount) * 0.5;
-        for(i32 s = 0; s < weightTotalCount; ++s) {
-            if(randf64(0.0, 1.0) < mutationRate) {
-                mutationCount++;
-                nextGenNN[i]->weights[s] += randf64(-factor, factor);
-            }
-        }
-    }
-
-#if 0
-    mutationCount += mutateRNN(mutationRate, 0.5, FROG_COUNT - reinsertCount,
-                                 nextGenNN + reinsertCount, &nnDef);
-#endif
-
-    const f32 mutationTagRate = 0.005f;
-    i32 tagMutations = 0;
-    for(i32 i = reinsertCount; i < FROG_COUNT; ++i) {
-        const f64 factor = 0.5;
-        for(i32 s = 0; s < weightTotalCount; ++s) {
-            if(randf64(0.0, 1.0) < mutationRate) {
-                mutationCount++;
-                nextGenNN[i]->weights[s] += randf64(-factor, factor);
-            }
-        }
-
-        if(randf64(0.0, 1.0) < mutationTagRate) {
-            tagMutations++;
-            i32 bit = randi64(0, FROG_TAG_BITS-1);
-            u8 prevSpecies = nextSpeciesTag[i];
-            nextSpeciesTag[i] ^= 1 << bit;
-            /*LOG("species transition %x -> %x", prevSpecies, nextSpeciesTag[i]);
-            assert(nextSpeciesTag[i] <= (1 << FROG_TAG_BITS) - 1);*/
-        }
-    }
-
-    LOG("mutationRate=%g mutationCount=%d tagMutations=%d", mutationRate, mutationCount, tagMutations);
-    memmove(curGenNN[0], nextGenNN[0], nnDef.neuralNetSize * FROG_COUNT);
-    memmove(curSpeciesTag, nextSpeciesTag, sizeof(curSpeciesTag));
 
     resetMap();
     resetFrogs();
@@ -1364,7 +1312,7 @@ void render()
             if(frogTexId[i] == t) {
                 i32 id = batchCount++;
                 tf[id] = frogTf[i];
-                color[id] = frogColor[curSpeciesTag[i]];
+                color[id] = speciesColor[curSpeciesTag[i]];
                 if(batchCount == BATCH_MAX) {
                     drawSpriteBatch(tex_frog[t], tf, color, BATCH_MAX);
                     batchCount = 0;
@@ -1472,15 +1420,16 @@ i32 main()
     LOG(" ww ooo  ooo ww");
     LOG("\n");
 
-#if 0
+    timeInit();
+    randSetSeed(time(NULL));
+
+#ifdef CONF_DEBUG
+    randSetSeed(0x1245);
     testPropagateNN();
     testPropagateRNN();
+    testWideTanh();
     testPropagateRNNWide();
 #endif
-
-    timeInit();
-
-    randSetSeed(time(NULL));
 
     SDL_SetMainReady();
     i32 sdl = SDL_Init(SDL_INIT_VIDEO);

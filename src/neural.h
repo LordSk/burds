@@ -13,9 +13,14 @@ typedef __m128d w128d;
 #define wide_f64_set1(f) _mm_set1_pd(f)
 #define wide_f64_add(wa, wb) _mm_add_pd(wa, wb)
 #define wide_f64_hadd(wa, wb) _mm_hadd_pd(wa, wb)
+#define wide_f64_sub(wa, wb) _mm_sub_pd(wa, wb)
 #define wide_f64_mul(wa, wb) _mm_mul_pd(wa, wb)
+#define wide_f64_div(wa, wb) _mm_div_pd(wa, wb)
 #define wide_f64_min(wa, wb) _mm_min_pd(wa, wb)
 #define wide_f64_max(wa, wb) _mm_max_pd(wa, wb)
+#define wide_f64_and(wa, wb) _mm_and_pd(wa, wb)
+#define wide_f64_blendv(wa, wb, mask) _mm_blendv_pd(wa, wb, mask)
+#define wide_f64_less_than(wa, wb) _mm_cmplt_pd(wa, wb)
 
 struct NeuralNet
 {
@@ -89,9 +94,11 @@ struct GeneticEnvRnn
 void rnnMakeDef(RecurrentNeuralNetDef* def, const i32 layerCount, const i32 layerNeuronCount[], f64 bias);
 void rnnAlloc(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef* def);
 void rnnDealloc(void* ptr);
+void rnnCopy(RecurrentNeuralNet* dest, RecurrentNeuralNet* src, RecurrentNeuralNetDef* def);
 void rnnInitRandom(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef* def);
 void rnnPropagate(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef* def);
 void rnnPropagateWide(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef* def);
+void testWideTanh();
 
 i32 reinsertTruncateNN(i32 maxBest, i32 nnCount, f64* fitness, NeuralNet** nextGen,
                        NeuralNet** curGen, NeuralNetDef* def);
@@ -117,3 +124,4 @@ void evolutionSSS1(GeneticEnvRnn* env);
 
 void ImGui_NeuralNet(NeuralNet* nn, NeuralNetDef* def);
 void ImGui_RecurrentNeuralNet(RecurrentNeuralNet* nn, RecurrentNeuralNetDef* def);
+void ImGui_SubPopWindow(const GeneticEnvRnn* env, const struct ImVec4* subPopColors);
