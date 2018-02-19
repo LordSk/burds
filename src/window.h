@@ -62,6 +62,7 @@ struct AppWindow
             LOG("ERROR: could not init imgui");
         }
 
+        glClearColor(0.2, 0.2, 0.2, 1.0f);
         setView(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
 
         return true;

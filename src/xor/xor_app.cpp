@@ -19,6 +19,7 @@ struct App {
 
 AppWindow window;
 
+Genome* xorGenome[XOR_COUNT];
 f64 xorFitness[XOR_COUNT];
 
 struct GenerationStats {
@@ -43,13 +44,14 @@ bool init()
         return false;
     }
 
-    glClearColor(0.2, 0.2, 0.2, 1.0f);
-
+    neatGenomeAlloc(xorGenome, XOR_COUNT);
+    resetSimulation();
     return true;
 }
 
 void cleanup()
 {
+    neatGenomeDealloc(xorGenome[0]);
 }
 
 void run()
@@ -91,6 +93,8 @@ void resetSimulation()
     generationNumber = 0;
     curGenStats = {};
     memset(pastGenStats, 0, sizeof(pastGenStats));
+
+    neatGenomeInit(xorGenome, XOR_COUNT, 2, 1);
 }
 
 void ImGui_ColoredRect(const ImVec2& size, const ImVec4& color)
@@ -131,6 +135,41 @@ void ImGui_NeuralNet(NeuralNet* nn, NeuralNetDef* def)
     }
 }
 
+void ImGui_Gene(const Gene& gene)
+{
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    ImVec2 size(50, 45);
+    ImVec2 pos = window->DC.CursorPos;
+    const ImRect bb(pos, pos + size);
+    ImGui::ItemSize(bb);
+
+    f64 blend = (clamp(gene.weight, -1.0, 1.0) + 1.0) * 0.5;
+    ImVec4 color(1.0 - blend, blend, 0.2, 1.0);
+    if(gene.disabled) {
+        color = ImVec4(0.4, 0.4, 0.4, 1.0);
+    }
+
+    u32 bgColor = ImGui::ColorConvertFloat4ToU32(color);
+    ImGui::RenderFrame(pos, pos + size, bgColor, false, 0.0);
+    ImGui::RenderFrame(pos, pos + ImVec2(50, 15), 0x80000000, false, 0.0);
+
+    char inNumStr[10];
+    char linkStr[32];
+    char weightStr[32];
+
+    sprintf(inNumStr, "#%d", gene.innovationNumber);
+    sprintf(linkStr, "%d > %d", gene.nodeIn, gene.nodeOut);
+    sprintf(weightStr, "%.3f", gene.weight);
+
+    pos.x += 2;
+    ImGui::RenderText(pos, inNumStr);
+
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0,0,0,1));
+    ImGui::RenderText(pos + ImVec2(0, 15), linkStr);
+    ImGui::RenderText(pos + ImVec2(0, 30), weightStr);
+    ImGui::PopStyleColor(1);
+}
+
 void ui_xorViewer()
 {
     ImGui::Begin("XOR viewer");
@@ -148,7 +187,9 @@ void ui_xorViewer()
         }
     }
     else {
-        ImGui::SliderInt("##xor_id", &dbgViewerId, 0, XOR_COUNT-1); ImGui::SameLine();
+        ImGui::PushItemWidth(-1);
+        ImGui::SliderInt("##xor_id", &dbgViewerId, 0, XOR_COUNT-1);
+        ImGui::PopItemWidth();
     }
 
     ImGui::Separator();
@@ -157,6 +198,19 @@ void ui_xorViewer()
     ImGui::TextColored(ImVec4(0, 1, 0, 1), "fitness: %g", xorFitness[dbgViewerId]);
 
     ImGui::Separator();
+
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(1,1));
+
+    const i32 geneCount = xorGenome[dbgViewerId]->geneCount;
+    const i32 perLine = 6;
+    for(i32 i = 0; i < geneCount; ++i) {
+        ImGui_Gene(xorGenome[dbgViewerId]->genes[i]);
+        if(i % perLine == 0) {
+            ImGui::SameLine();
+        }
+    }
+
+    ImGui::PopStyleVar(1);
 
     ImGui::End();
 }

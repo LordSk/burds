@@ -39,7 +39,7 @@ void neatGenomeInit(Genome** genomes, const i32 count, i32 inputCount, i32 outpu
         for(i16 in = 0; in < inputCount; ++in) {
             for(i16 out = 0; out < outputCount; ++out) {
                 i32 gid = g.geneCount++;
-                g.genes[gid] = { gid, in, out, 0, randf64(-1.0, 1.0) };
+                g.genes[gid] = { gid, in, (i16)(inputCount + out), 0, randf64(-1.0, 1.0) };
             }
         }
     }
