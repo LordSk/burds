@@ -4,6 +4,8 @@
 #include <SDL2/SDL.h>
 #include <gl3w.h>
 #include "imgui/imgui.h"
+#define IMGUI_DEFINE_MATH_OPERATORS
+#include "imgui/imgui_internal.h"
 #include "imgui/imgui_sdl2_setup.h"
 
 #define WINDOW_WIDTH 1600
@@ -18,13 +20,13 @@ struct AppWindow
     ImGuiGLSetup* ims;
     bool running = true;
 
-    bool init()
+    bool init(const char* title)
     {
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
 
-        sdlWin = SDL_CreateWindow("Frogs",
+        sdlWin = SDL_CreateWindow(title,
                                   SDL_WINDOWPOS_CENTERED,
                                   SDL_WINDOWPOS_CENTERED,
                                   WINDOW_WIDTH, WINDOW_HEIGHT,

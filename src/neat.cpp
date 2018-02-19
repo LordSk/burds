@@ -49,10 +49,10 @@ i32 compareNeatNNComputations(void const* a, void const* b)
 {
     const NeatNN::Computation& ca = *(NeatNN::Computation*)a;
     const NeatNN::Computation& cb = *(NeatNN::Computation*)b;
-    if(ca.nodeIn < cb.nodeIn) return -1;
-    if(ca.nodeIn > cb.nodeIn) return 1;
     if(ca.nodeOut < cb.nodeOut) return -1;
     if(ca.nodeOut > cb.nodeOut) return 1;
+    if(ca.nodeIn < cb.nodeIn) return -1;
+    if(ca.nodeIn > cb.nodeIn) return 1;
     return 0;
 }
 

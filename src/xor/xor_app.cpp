@@ -8,9 +8,6 @@
 
 #include "neat.h"
 #include "window.h"
-#include "imgui/imgui.h"
-#define IMGUI_DEFINE_MATH_OPERATORS
-#include "imgui/imgui_internal.h"
 
 #define XOR_COUNT 1024
 #define STATS_HISTORY_COUNT 30
@@ -40,7 +37,7 @@ i32 dbgViewerId = 0;
 
 bool init()
 {
-    if(!window.init()) {
+    if(!window.init("XOR test")) {
         return false;
     }
 
