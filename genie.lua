@@ -43,7 +43,8 @@ solution "burds_solution"
 	targetdir(BUILD_DIR)
 	
 	includedirs {
-		"src"
+		"src",
+        SDL2_include,
 	}
 	
 	links {
@@ -55,7 +56,12 @@ solution "burds_solution"
 		"imm32",
 		"version",
 		"ws2_32",
-		"advapi32"
+		"advapi32",
+        
+        "gdi32",
+		"glu32",
+		"opengl32",
+		SDL2_lib,
 	}
 	
 	flags {
@@ -86,20 +92,7 @@ project "burds_app"
 		"src/imgui/*.h",
 		"src/imgui/*.cpp",
 	}
-	
-	includedirs {
-		SDL2_include,
-	}
-	
-	links {
-		"gdi32",
-		"glu32",
-		"opengl32",
-		SDL2_lib,
-	}
-    
-    
-    
+
 
 project "frogs_app"
 	kind "WindowedApp"
@@ -114,14 +107,18 @@ project "frogs_app"
 		"src/imgui/*.h",
 		"src/imgui/*.cpp",
 	}
+
+    
+project "xor_app"
+	kind "WindowedApp"
+
+	configuration {}
 	
-	includedirs {
-		SDL2_include,
-	}
-	
-	links {
-		"gdi32",
-		"glu32",
-		"opengl32",
-		SDL2_lib,
+	files {
+		"src/*.h",
+		"src/*.cpp",
+		"src/xor/*.h",
+		"src/xor/*.cpp",
+		"src/imgui/*.h",
+		"src/imgui/*.cpp",
 	}

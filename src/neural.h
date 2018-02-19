@@ -6,7 +6,6 @@
 #define MAX_LAYERS 10
 
 // wide types
-typedef __m128 wf32;
 typedef __m128d w128d;
 
 #define wide_f64_zero() _mm_setzero_pd()

@@ -817,6 +817,13 @@ void updateMechanics()
         if(birdDistToNextAppleOld[i] > birdDistToNextApple[i]) {
            birdFitness[i] += (birdDistToNextAppleOld[i] - birdDistToNextApple[i]) / 1000.0;
         }
+        else {
+            birdFitness[i] -= fabs(birdDistToNextAppleOld[i] - birdDistToNextApple[i]) / 2000.0;
+        }
+
+        if(birdFitness[i] < 0) {
+            birdFitness[i] = 0.0;
+        }
     }
 
     f64 maxFitness = 0.0;
