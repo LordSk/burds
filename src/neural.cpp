@@ -10,9 +10,6 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "imgui/imgui_internal.h"
 
-#define stack_arr(type, count) ((type*)alloca(sizeof(type) * count))
-#define zero_arr(arr, count) (memset(arr, 0, sizeof(arr[0]) * count))
-
 #define sigmoid(val) (1.0 / (1.0 + expf(-val)))
 //#define hidden_activate(val) min(max(0, val), 10.0)
 #define hidden_activate(val) tanh(val)
@@ -812,7 +809,7 @@ void testPropagateRNN()
 
     RecurrentNeuralNetDef def;
     const i32 layers[] = {2, 4, 2, 2};
-    rnnMakeDef(&def, array_count(layers), layers, 1.0);
+    rnnMakeDef(&def, arr_count(layers), layers, 1.0);
 
     RecurrentNeuralNet* nn;
     rnnAlloc(&nn, 1, &def);
@@ -823,15 +820,15 @@ void testPropagateRNN()
 
     f64* nnWeights = nn->weights;
     memmove(nnWeights, weights1, sizeof(weights1));
-    nnWeights += array_count(weights1);
+    nnWeights += arr_count(weights1);
     memmove(nnWeights, weights2, sizeof(weights2));
-    nnWeights += array_count(weights2);
+    nnWeights += arr_count(weights2);
     memmove(nnWeights, outWeights, sizeof(outWeights));
 
     memmove(nn->prevHiddenValues, prevHiddenVals, sizeof(prevHiddenVals));
-    memmove(nn->prevHiddenValues + array_count(prevHiddenVals), prevHiddenVals2, sizeof(prevHiddenVals2));
+    memmove(nn->prevHiddenValues + arr_count(prevHiddenVals), prevHiddenVals2, sizeof(prevHiddenVals2));
     memmove(nn->prevHiddenWeights, prevHiddenWeights, sizeof(prevHiddenWeights));
-    memmove(nn->prevHiddenWeights + array_count(prevHiddenWeights),
+    memmove(nn->prevHiddenWeights + arr_count(prevHiddenWeights),
             prevHiddenWeights2, sizeof(prevHiddenWeights2));
 
 
@@ -893,7 +890,7 @@ void testPropagateRNNWide()
     const i32 PASSES = 3;
     RecurrentNeuralNetDef def;
     const i32 layers[] = {2, 4, 6, 2};
-    rnnMakeDef(&def, array_count(layers), layers, 1.0);
+    rnnMakeDef(&def, arr_count(layers), layers, 1.0);
 
     RecurrentNeuralNet* nn[2];
     rnnAlloc(nn, 2, &def);
@@ -1137,10 +1134,10 @@ void ImGui_SubPopWindow(const GeneticEnvRnn* env, const ImVec4* subPopColors)
     f64* maxFitness = stack_arr(f64,SUBPOP_MAX_COUNT);
     f64* avgFitness = stack_arr(f64,SUBPOP_MAX_COUNT);
     i32* subPopIndivCount = stack_arr(i32,SUBPOP_MAX_COUNT);
-    zero_arr(maxFitness,SUBPOP_MAX_COUNT);
-    zero_arr(totalFitness,SUBPOP_MAX_COUNT);
-    zero_arr(avgFitness,SUBPOP_MAX_COUNT);
-    zero_arr(subPopIndivCount,SUBPOP_MAX_COUNT);
+    arr_zero(maxFitness,SUBPOP_MAX_COUNT);
+    arr_zero(totalFitness,SUBPOP_MAX_COUNT);
+    arr_zero(avgFitness,SUBPOP_MAX_COUNT);
+    arr_zero(subPopIndivCount,SUBPOP_MAX_COUNT);
     f64 maxTotal = 0;
     f64 maxMaxFitness = 0;
     f64 maxAvg = 0;

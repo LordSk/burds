@@ -236,7 +236,7 @@ bool init()
 
     const i32 layers[] = NEURAL_NET_LAYERS;
 
-    rnnMakeDef(&nnDef, array_count(layers), layers, 1.0);
+    rnnMakeDef(&nnDef, arr_count(layers), layers, 1.0);
     rnnAlloc(curGenNN, FROG_COUNT, &nnDef);
     rnnAlloc(nextGenNN, FROG_COUNT, &nnDef);
 

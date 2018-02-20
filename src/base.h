@@ -18,7 +18,10 @@ typedef double f64;
 #define TIME_MILLI() (clock() / (CLOCKS_PER_SEC / 1000))
 #define TIME_MICRO() (clock() / CLOCKS_PER_SEC)
 #define MAKE_STR(s) #s
-#define array_count(arr) (sizeof(arr)/sizeof(arr[0]))
+#define arr_count(arr) (sizeof(arr)/sizeof(arr[0]))
+#define stack_arr(type, count) ((type*)alloca(sizeof(type) * count))
+#define arr_zero(arr, count) (memset(arr, 0, sizeof(arr[0]) * count))
+#define mem_zero(arr) (memset(arr, 0, sizeof(arr)))
 
 #define TRUE 1
 #define FALSE 0
