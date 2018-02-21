@@ -31,6 +31,7 @@ struct Genome
     i32 inputNodeCount = 0;  // TODO: this is constant, no need to store it in EVERY genome
     i32 outputNodeCount = 0; // same here
     i32 totalNodeCount = 0;
+    i32 species;
 };
 
 struct NeatNN
@@ -53,3 +54,5 @@ void neatGenomeMakeNN(Genome** genomes, const i32 count, NeatNN** nn);
 void neatNnDealloc(void* ptr);
 
 void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 count);
+
+void neatTestTryReproduce(const Genome& g1, const Genome& g2);

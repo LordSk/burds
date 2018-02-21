@@ -173,6 +173,24 @@ void ImGui_Gene(const Gene& gene, bool disabled)
     ImGui::PopStyleColor(1);
 }
 
+void ImGui_GeneList(const Genome* genome)
+{
+    ImGui::BeginChild("gene_list", ImVec2(300, 140));
+
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(1,1));
+    const i32 geneCount = genome->geneCount;
+    const i32 perLine = 5;
+    for(i32 i = 0; i < geneCount; ++i) {
+        ImGui_Gene(genome->genes[i], genome->geneDisabled[i]);
+        if(((i+1) % perLine) != 0 && i != geneCount-1) {
+            ImGui::SameLine();
+        }
+    }
+    ImGui::PopStyleVar(1);
+
+    ImGui::EndChild();
+}
+
 void ImGui_NeatNN(const Genome* genome)
 {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
@@ -186,6 +204,7 @@ void ImGui_NeatNN(const Genome* genome)
     for(i32 i = 0; i < g.totalNodeCount; ++i) {
         maxVPos = max(maxVPos, g.nodePos[i].vpos);
     }
+    maxVPos++;
 
     ImVec2 frameSize(g.layerCount * (linkSpaceWidth + nodeSpace.x), nodeSpace.y * maxVPos);
     ImVec2 pos = window->DC.CursorPos;
@@ -235,30 +254,48 @@ void ui_xorViewer()
     else {
         ImGui::PushItemWidth(-1);
         ImGui::SliderInt("##xor_id", &dbgViewerId, 0, XOR_COUNT-1);
+        ImGui::InputInt("##xor_id_input", &dbgViewerId);
         ImGui::PopItemWidth();
+
+        if(ImGui::Button("Next of same species")) {
+            const i32 species = xorGenome[dbgViewerId]->species;
+            for(i32 i = 1; i < XOR_COUNT; ++i) {
+                i32 id = (dbgViewerId + i) % XOR_COUNT;
+                if(xorGenome[id]->species == species) {
+                    dbgViewerId = id;
+                    break;
+                }
+            }
+        }
     }
 
     ImGui::Separator();
 
     ImGui::Text("XOR_%d", dbgViewerId);
-    ImGui::TextColored(ImVec4(0, 1, 0, 1), "fitness: %g", xorFitness[dbgViewerId]);
+    ImGui::TextColored(ImVec4(1, 0, 1, 1), "Species: %X", xorGenome[dbgViewerId]->species);
+    ImGui::TextColored(ImVec4(0, 1, 0, 1), "Fitness: %g", xorFitness[dbgViewerId]);
 
     ImGui::Separator();
 
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(1,3));
-    const i32 geneCount = xorGenome[dbgViewerId]->geneCount;
-    const i32 perLine = 5;
-    for(i32 i = 0; i < geneCount; ++i) {
-        ImGui_Gene(xorGenome[dbgViewerId]->genes[i], xorGenome[dbgViewerId]->geneDisabled[i]);
-        if(((i+1) % perLine) != 0 && i != geneCount-1) {
-            ImGui::SameLine();
-        }
-    }
-    ImGui::PopStyleVar(1);
+    ImGui_GeneList(xorGenome[dbgViewerId]);
 
     ImGui::Separator();
 
     ImGui_NeatNN(xorGenome[dbgViewerId]);
+
+    ImGui::Separator();
+
+    static i32 versusId1 = 0;
+    static i32 versusId2 = 1;
+
+    ImGui::PushItemWidth(200);
+    ImGui::InputInt("##xor_vs_1", &versusId1); ImGui::SameLine();
+    ImGui::InputInt("##xor_vs_2", &versusId2);
+    ImGui::PopItemWidth();
+
+    if(ImGui::Button("Reproduce")) {
+        neatTestTryReproduce(*xorGenome[versusId1], *xorGenome[versusId2]);
+    }
 
     ImGui::End();
 }

@@ -29,6 +29,7 @@ typedef double f64;
 #define PI (3.14159265359)
 #define TAU (6.28318530718)
 
+#define I32_MAX 0x7fffffff
 #define U64_MAX 0xffffffffffffffff
 
 #ifndef max
