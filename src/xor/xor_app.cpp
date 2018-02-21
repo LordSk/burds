@@ -182,13 +182,9 @@ void ImGui_NeatNN(const Genome* genome)
     const f32 linkSpaceWidth = 60.f;
     const f32 nodeRadius = 12.f;
 
-    i32 nodeVPos[128] = {0};
-    i32 layerNodeCount[128] = {0};
     i32 maxVPos = 0;
     for(i32 i = 0; i < g.totalNodeCount; ++i) {
-        const i32 layer = g.nodeLayer[i];
-        nodeVPos[i] = layerNodeCount[layer]++;
-        maxVPos = max(maxVPos, nodeVPos[i]);
+        maxVPos = max(maxVPos, g.nodePos[i].vpos);
     }
 
     ImVec2 frameSize(g.layerCount * (linkSpaceWidth + nodeSpace.x), nodeSpace.y * maxVPos);
@@ -201,9 +197,8 @@ void ImGui_NeatNN(const Genome* genome)
     assert(g.totalNodeCount <= 128);
 
     for(i32 i = 0; i < g.totalNodeCount; ++i) {
-        const i32 layer = g.nodeLayer[i];
-        nodePos[i] = pos + ImVec2(nodeSpace.x * 0.5 + (linkSpaceWidth + nodeSpace.x) * layer,
-                                  nodeSpace.y * nodeVPos[i] + nodeSpace.y * 0.5f);
+        nodePos[i] = pos + ImVec2(nodeSpace.x * 0.5 + (linkSpaceWidth + nodeSpace.x) * g.nodePos[i].layer,
+                                  nodeSpace.y * g.nodePos[i].vpos + nodeSpace.y * 0.5f);
     }
 
     // draw lines

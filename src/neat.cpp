@@ -36,12 +36,16 @@ void neatGenomeInit(Genome** genomes, const i32 count, i32 inputCount, i32 outpu
         g.layerCount = 2;
         g.geneCount = 0;
         mem_zero(g.geneDisabled);
+        mem_zero(g.layerNodeCount);
+        mem_zero(g.nodePos);
 
         for(i16 n = 0; n < g.inputNodeCount; ++n) {
-            g.nodeLayer[n] = 0;
+            g.nodePos[n].layer = 0;
+            g.nodePos[n].vpos = g.layerNodeCount[0]++;
         }
-        for(i16 n = 0; n < g.inputNodeCount; ++n) {
-            g.nodeLayer[n+g.inputNodeCount] = 1;
+        for(i16 n = 0; n < inputCount; ++n) {
+            g.nodePos[n+inputCount].layer = 1;
+            g.nodePos[n+inputCount].vpos = g.layerNodeCount[1]++;
         }
 
         for(i16 in = 0; in < inputCount; ++in) {
@@ -131,6 +135,51 @@ static i32 compareFitnessAsc(const void* a, const void* b)
     return 0;
 }
 
+struct StructuralConnection
+{
+    NodePos in;
+    NodePos out;
+};
+
+i32 g_innNumPool[2048];
+StructuralConnection g_posPool[2048];
+i32 g_structPoolCount;
+i32 g_structMatchesFound;
+
+static void resetStructuralChanges()
+{
+    g_structPoolCount = 0;
+    g_structMatchesFound = 0;
+}
+
+// I think this way of checking if a structural change is equivalent works
+// TODO: test it
+static i32 newInnovationNumber(const NodePos& nodePosIn, const NodePos& nodePosOut)
+{
+    i32 innovationNumber = -1;
+    const i32 poolCount2 = g_structPoolCount;
+
+    for(i32 j = 0; j < g_structPoolCount; ++j) {
+        if(g_posPool[j].in.layer == nodePosIn.layer &&
+           g_posPool[j].in.vpos == nodePosIn.vpos &&
+           g_posPool[j].out.layer == nodePosOut.layer &&
+           g_posPool[j].out.vpos == nodePosOut.vpos) {
+            g_structMatchesFound++;
+            return g_innNumPool[j];
+        }
+    }
+
+    if(innovationNumber == -1) {
+        innovationNumber = g_innovationNumber++;
+    }
+
+    assert(poolCount2 < 2048);
+    i32 pid = g_structPoolCount++;
+    g_posPool[pid] = { nodePosIn, nodePosOut };
+    g_innNumPool[pid] = innovationNumber;
+    return innovationNumber;
+}
+
 void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 count)
 {
 #if 0
@@ -171,6 +220,13 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
     }
 #endif
 
+    // save this evolution pass structural changes and use it to check if
+    // a new structural change has already been assigned an innovation number
+    resetStructuralChanges();
+
+    i32 newConnectionMutationCount = 0;
+    i32 newNodeMutationCount = 0;
+
     // test mutate
     for(i32 i = 0; i < count; ++i) {
         Genome& g = *genomes[i];
@@ -193,12 +249,12 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
             const i32 outputLayer = g.layerCount-1;
 
             i16 nodeIn = randi64(0, g.totalNodeCount-1);
-            while(g.nodeLayer[nodeIn] == outputLayer) {
+            while(g.nodePos[nodeIn].layer == outputLayer) {
                 nodeIn = randi64(0, g.totalNodeCount-1);
             }
 
             i16 nodeOut = randi64(g.inputNodeCount, g.totalNodeCount-1);
-            while(g.nodeLayer[nodeOut] <= g.nodeLayer[nodeIn]) {
+            while(g.nodePos[nodeOut].layer <= g.nodePos[nodeIn].layer) {
                 nodeOut = randi64(g.inputNodeCount, g.totalNodeCount-1);
             }
 
@@ -214,12 +270,13 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
 
             if(!found) {
                 i32 gid = g.geneCount++;
-                assert(gid < MAX_GENES);
+                assert(gid < NEAT_MAX_GENES);
                 Gene& gene = g.genes[gid];
-                gene.innovationNumber = g_innovationNumber++;
                 gene.nodeIn = nodeIn;
                 gene.nodeOut = nodeOut;
                 gene.weight = randf64(-1.0, 1.0);
+                gene.innovationNumber = newInnovationNumber(g.nodePos[nodeIn], g.nodePos[nodeOut]);
+                newConnectionMutationCount++;
             }
         }
 
@@ -231,31 +288,47 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
             const i16 splitNodeOut = g.genes[splitId].nodeOut;
 
             i16 newNodeId = g.totalNodeCount++;
-            assert(newNodeId < MAX_NODES);
+            assert(newNodeId < NEAT_MAX_NODES);
 
             i32 con1 = g.geneCount++;
-            assert(con1 < MAX_GENES);
-            g.genes[con1] = { g_innovationNumber++, splitNodeIn,
+            assert(con1 < NEAT_MAX_GENES);
+            g.genes[con1] = { -1, splitNodeIn,
                               newNodeId, 1.0 };
+            g.genes[con1].innovationNumber = newInnovationNumber(g.nodePos[g.genes[con1].nodeIn],
+                                                                 g.nodePos[g.genes[con1].nodeOut]);
 
             i32 con2 = g.geneCount++;
-            assert(con2 < MAX_GENES);
-            g.genes[con2] = { g_innovationNumber++, newNodeId,
+            assert(con2 < NEAT_MAX_GENES);
+            g.genes[con2] = { -1, newNodeId,
                               splitNodeOut, g.genes[splitId].weight };
+            g.genes[con2].innovationNumber = newInnovationNumber(g.nodePos[g.genes[con2].nodeIn],
+                                                                 g.nodePos[g.genes[con2].nodeOut]);
 
             // add a new layer if needed
-            if(g.nodeLayer[splitNodeIn] + 1 == g.nodeLayer[splitNodeOut]) {
+            if(g.nodePos[splitNodeIn].layer + 1 == g.nodePos[splitNodeOut].layer) {
+                assert(g.layerCount < NEAT_MAX_LAYERS);
                 g.layerCount++;
-                const i32 expandFrom = g.nodeLayer[splitNodeOut];
+                const i32 expandFrom = g.nodePos[splitNodeOut].layer;
 
                 for(i32 n = 0; n < g.totalNodeCount; ++n) {
-                    if(g.nodeLayer[n] >= expandFrom) {
-                        g.nodeLayer[n]++;
+                    if(g.nodePos[n].layer >= expandFrom) {
+                        g.nodePos[n].layer++;
                     }
                 }
+
+                memmove(&g.layerNodeCount[expandFrom+1],
+                        &g.layerNodeCount[expandFrom],
+                        (g.layerCount-expandFrom) * sizeof(g.layerNodeCount[0]));
+                g.layerNodeCount[expandFrom] = 0;
             }
 
-            g.nodeLayer[newNodeId] = g.nodeLayer[splitNodeIn] + 1;
+            i32 layer = g.nodePos[splitNodeIn].layer + 1;
+            g.nodePos[newNodeId].layer = layer;
+            g.nodePos[newNodeId].vpos = g.layerNodeCount[layer]++;
+            newNodeMutationCount++;
         }
     }
+
+    LOG("NEAT> mutations - connections=%d nodes=%d", newConnectionMutationCount, newNodeMutationCount);
+    LOG("NEAT> structural matches=%d", g_structMatchesFound);
 }

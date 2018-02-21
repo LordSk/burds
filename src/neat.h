@@ -10,14 +10,22 @@ struct Gene
     f64 weight;
 };
 
-#define MAX_GENES 512
-#define MAX_NODES 128
+#define NEAT_MAX_GENES 512
+#define NEAT_MAX_NODES 128
+#define NEAT_MAX_LAYERS 64
+
+struct NodePos
+{
+    u8 layer;
+    u8 vpos;
+};
 
 struct Genome
 {
-    Gene genes[MAX_GENES];
-    u8 geneDisabled[MAX_GENES];
-    u8 nodeLayer[MAX_NODES];
+    Gene genes[NEAT_MAX_GENES];
+    u8 geneDisabled[NEAT_MAX_GENES];
+    u8 layerNodeCount[NEAT_MAX_LAYERS];
+    NodePos nodePos[NEAT_MAX_NODES];
     i32 layerCount = 0;
     i32 geneCount = 0;
     i32 inputNodeCount = 0;  // TODO: this is constant, no need to store it in EVERY genome
@@ -37,7 +45,6 @@ struct NeatNN
     i32 computationsCount;
 };
 
-i32 newInnovationNumber();
 void neatGenomeAlloc(Genome** genomes, const i32 count);
 void neatGenomeDealloc(void* ptr);
 
