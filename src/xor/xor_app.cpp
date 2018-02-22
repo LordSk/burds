@@ -16,7 +16,8 @@ struct App {
 
 AppWindow window;
 
-Genome* xorGenome[XOR_COUNT];
+Genome* xorCurgen[XOR_COUNT];
+Genome* xorNextGen[XOR_COUNT];
 f64 xorFitness[XOR_COUNT];
 
 struct GenerationStats {
@@ -37,18 +38,25 @@ i32 dbgViewerId = 0;
 
 bool init()
 {
-    if(!window.init("XOR test")) {
+    if(!window.init("XOR test", "xor_imgui.ini")) {
         return false;
     }
 
-    neatGenomeAlloc(xorGenome, XOR_COUNT);
+    neatGenomeAlloc(xorCurgen, XOR_COUNT);
+    neatGenomeAlloc(xorNextGen, XOR_COUNT);
     resetSimulation();
+
+    for(i32 i = 0; i < XOR_COUNT; ++i) {
+        xorFitness[i] = randf64(1.0, 10.0);
+    }
+
     return true;
 }
 
 void cleanup()
 {
-    neatGenomeDealloc(xorGenome[0]);
+    neatGenomeDealloc(xorCurgen[0]);
+    neatGenomeDealloc(xorNextGen[0]);
 }
 
 void run()
@@ -85,7 +93,7 @@ void handleEvent(SDL_Event* event)
         }
 
         if(event->key.keysym.sym == SDLK_e) {
-           neatEvolve(xorGenome, nullptr, xorFitness, XOR_COUNT);
+           neatEvolve(xorCurgen, xorNextGen, xorFitness, XOR_COUNT);
            return;
         }
     }
@@ -97,7 +105,7 @@ void resetSimulation()
     curGenStats = {};
     memset(pastGenStats, 0, sizeof(pastGenStats));
 
-    neatGenomeInit(xorGenome, XOR_COUNT, 2, 1);
+    neatGenomeInit(xorCurgen, XOR_COUNT, 2, 1);
 }
 
 void ImGui_ColoredRect(const ImVec2& size, const ImVec4& color)
@@ -111,31 +119,6 @@ void ImGui_ColoredRect(const ImVec2& size, const ImVec4& color)
     ImGui::ItemSize(bb);
 
     ImGui::RenderFrame(bb.Min, bb.Max, ImGui::ColorConvertFloat4ToU32(color), false, 0);
-}
-
-void ImGui_NeuralNet(NeuralNet* nn, NeuralNetDef* def)
-{
-    ImGuiWindow* window = ImGui::GetCurrentWindow();
-    if (window->SkipItems)
-        return;
-
-    constexpr i32 cellsPerLine = 10;
-    const ImVec2 cellSize(10, 10);
-    i32 lines = def->neuronCount / cellsPerLine + 1;
-    ImVec2 size(cellsPerLine * cellSize.x, lines * cellSize.y);
-
-    ImVec2 pos = window->DC.CursorPos;
-    const ImRect bb(pos, pos + size);
-    ImGui::ItemSize(bb);
-
-    for(i32 i = 0; i < def->neuronCount; ++i) {
-        f32 w = clamp(nn->values[i] * 0.5, 0.0, 1.0);
-        u32 color = 0xff000000 | ((u8)(0xff*w) << 16)| ((u8)(0xff*w) << 8)| ((u8)(0xff*w));
-        i32 column = i % cellsPerLine;
-        i32 line = i / cellsPerLine;
-        ImVec2 offset(column * cellSize.x, line * cellSize.y);
-        ImGui::RenderFrame(pos + offset, pos + offset + cellSize, color, false, 0);
-    }
 }
 
 void ImGui_Gene(const Gene& gene, bool disabled)
@@ -160,7 +143,7 @@ void ImGui_Gene(const Gene& gene, bool disabled)
     char linkStr[32];
     char weightStr[32];
 
-    sprintf(inNumStr, "#%d", gene.innovationNumber);
+    sprintf(inNumStr, "#%d", gene.historicalMarker);
     sprintf(linkStr, "%d > %d", gene.nodeIn, gene.nodeOut);
     sprintf(weightStr, "%.3f", gene.weight);
 
@@ -175,7 +158,7 @@ void ImGui_Gene(const Gene& gene, bool disabled)
 
 void ImGui_GeneList(const Genome* genome)
 {
-    ImGui::BeginChild("gene_list", ImVec2(300, 140));
+    ImGui::BeginChild((ImGuiID)(intptr_t)genome, ImVec2(300, 140));
 
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(1,1));
     const i32 geneCount = genome->geneCount;
@@ -230,8 +213,12 @@ void ImGui_NeatNN(const Genome* genome)
     }
 
     // draw nodes
+    char numStr[5];
     for(i32 i = 0; i < g.totalNodeCount; ++i) {
         draw_list->AddCircleFilled(nodePos[i], nodeRadius, 0xffffffffff, 32);
+        sprintf(numStr, "%d", i);
+        ImVec2 labelSize = ImGui::CalcTextSize(numStr);
+        draw_list->AddText(nodePos[i] + ImVec2(-labelSize.x * 0.5, -labelSize.y * 0.5), 0xFF000000, numStr);
     }
 }
 
@@ -258,10 +245,10 @@ void ui_xorViewer()
         ImGui::PopItemWidth();
 
         if(ImGui::Button("Next of same species")) {
-            const i32 species = xorGenome[dbgViewerId]->species;
+            const i32 species = xorCurgen[dbgViewerId]->species;
             for(i32 i = 1; i < XOR_COUNT; ++i) {
                 i32 id = (dbgViewerId + i) % XOR_COUNT;
-                if(xorGenome[id]->species == species) {
+                if(xorCurgen[id]->species == species) {
                     dbgViewerId = id;
                     break;
                 }
@@ -272,29 +259,39 @@ void ui_xorViewer()
     ImGui::Separator();
 
     ImGui::Text("XOR_%d", dbgViewerId);
-    ImGui::TextColored(ImVec4(1, 0, 1, 1), "Species: %X", xorGenome[dbgViewerId]->species);
+    ImGui::TextColored(ImVec4(1, 0, 1, 1), "Species: %X", xorCurgen[dbgViewerId]->species);
     ImGui::TextColored(ImVec4(0, 1, 0, 1), "Fitness: %g", xorFitness[dbgViewerId]);
 
     ImGui::Separator();
 
-    ImGui_GeneList(xorGenome[dbgViewerId]);
+    ImGui_GeneList(xorCurgen[dbgViewerId]);
 
     ImGui::Separator();
 
-    ImGui_NeatNN(xorGenome[dbgViewerId]);
+    ImGui_NeatNN(xorCurgen[dbgViewerId]);
 
-    ImGui::Separator();
 
     static i32 versusId1 = 0;
     static i32 versusId2 = 1;
+    const i32 outId = XOR_COUNT-1;
+    if(ImGui::CollapsingHeader("Test")) {
+        ImGui::PushItemWidth(200);
+        ImGui::InputInt("##xor_vs_1", &versusId1); ImGui::SameLine();
+        ImGui::InputInt("##xor_vs_2", &versusId2);
+        ImGui::PopItemWidth();
 
-    ImGui::PushItemWidth(200);
-    ImGui::InputInt("##xor_vs_1", &versusId1); ImGui::SameLine();
-    ImGui::InputInt("##xor_vs_2", &versusId2);
-    ImGui::PopItemWidth();
+        if(ImGui::Button("Reproduce")) {
+            neatTestTryReproduce(*xorCurgen[versusId1], *xorCurgen[versusId2]);
+        }
 
-    if(ImGui::Button("Reproduce")) {
-        neatTestTryReproduce(*xorGenome[versusId1], *xorGenome[versusId2]);
+        ImGui::SameLine();
+
+        if(ImGui::Button("Crossover")) {
+            neatTestCrossover(xorCurgen[versusId1], xorCurgen[versusId2], xorCurgen[outId]);
+        }
+
+        ImGui_GeneList(xorCurgen[outId]);
+        ImGui_NeatNN(xorCurgen[outId]);
     }
 
     ImGui::End();

@@ -20,7 +20,7 @@ struct AppWindow
     ImGuiGLSetup* ims;
     bool running = true;
 
-    bool init(const char* title)
+    bool init(const char* title, const char* configName)
     {
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
@@ -59,7 +59,7 @@ struct AppWindow
             return false;
         }
 
-        ims = imguiInit(WINDOW_WIDTH, WINDOW_HEIGHT);
+        ims = imguiInit(WINDOW_WIDTH, WINDOW_HEIGHT, configName);
         if(!ims) {
             LOG("ERROR: could not init imgui");
         }

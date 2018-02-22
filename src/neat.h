@@ -1,10 +1,9 @@
 #pragma once
 #include "base.h"
-#include "neural.h"
 
 struct Gene
 {
-    i32 innovationNumber;
+    i32 historicalMarker;
     i16 nodeIn;
     i16 nodeOut;
     f64 weight;
@@ -16,8 +15,8 @@ struct Gene
 
 struct NodePos
 {
-    u8 layer;
-    u8 vpos;
+    i8 layer;
+    i8 vpos;
 };
 
 struct Genome
@@ -53,6 +52,7 @@ void neatGenomeInit(Genome** genomes, const i32 count, i32 inputCount, i32 outpu
 void neatGenomeMakeNN(Genome** genomes, const i32 count, NeatNN** nn);
 void neatNnDealloc(void* ptr);
 
-void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 count);
+void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 popCount);
 
 void neatTestTryReproduce(const Genome& g1, const Genome& g2);
+void neatTestCrossover(const Genome* parentA, const Genome* parentB, Genome* dest);
