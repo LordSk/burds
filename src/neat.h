@@ -45,6 +45,19 @@ struct NeatNN
     i32 computationsCount;
 };
 
+struct NeatEvolutionParams
+{
+    f64 compC1 = 1.0; // compatibility distance DISJOINT factor
+    f64 compC2 = 1.0; // compatibility distance EXCESS factor
+    f64 compC3 = 0.4; // compatibility distance WEIGHT factor
+    f64 compT = 0.6; // compatibility threshold
+    f64 crossoverKeepDisabled = 0.75; // crossover chance to keep a gene disabled
+    f64 mutateWeight = 0.8; // mutation chance to alter a connection weight
+    f64 mutateResetWeight = 0.1; // mutation chance ton reset a weight if chosen for alteration
+    f64 mutateAddConn = 0.3; // mutation chance to add a connection between 2 nodes
+    f64 mutateAddNode = 0.03; // mutation chance to split an existing connection to add a node in between
+};
+
 void neatGenomeAlloc(Genome** genomes, const i32 count);
 void neatGenomeDealloc(void* ptr);
 
@@ -52,7 +65,8 @@ void neatGenomeInit(Genome** genomes, const i32 count, i32 inputCount, i32 outpu
 void neatGenomeMakeNN(Genome** genomes, const i32 count, NeatNN** nn);
 void neatNnDealloc(void* ptr);
 
-void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 popCount);
+void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 popCount,
+                const NeatEvolutionParams& params);
 
 void neatTestTryReproduce(const Genome& g1, const Genome& g2);
 void neatTestCrossover(const Genome* parentA, const Genome* parentB, Genome* dest);

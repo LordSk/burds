@@ -297,6 +297,8 @@ static i32 selectRoulette(const i32 count, f64* fitness, f64 totalFitness)
 
 static void crossover(Genome* dest, const Genome* parentA, const Genome* parentB)
 {
+    constexpr f64 geneStayDisabledChance = 0.75;
+
     // NOTE: parentA is the most fit
     const i32 geneCountA = parentA->geneCount;
     const i32 geneCountB = parentB->geneCount;
@@ -358,7 +360,8 @@ static void crossover(Genome* dest, const Genome* parentA, const Genome* parentB
                 else {
                     genesOut[gid] = genesB[b];
                 }
-                geneDisabledOut[gid] = geneDisabledA[a] | geneDisabledB[b];
+                geneDisabledOut[gid] = randf64(0.0, 1.0) < geneStayDisabledChance ?
+                            (geneDisabledA[a] | geneDisabledB[b]) : 0;
                 break;
             }
         }
@@ -369,7 +372,7 @@ static void crossover(Genome* dest, const Genome* parentA, const Genome* parentB
         if(resultA[a] == DISJOINT || resultA[a] == EXCESS) {
             const i32 gid = geneCountOut++;
             genesOut[gid] = genesA[a];
-            geneDisabledOut[gid] = geneDisabledA[a];
+            geneDisabledOut[gid] = randf64(0.0, 1.0) < geneStayDisabledChance ? geneDisabledA[a] : 0;
         }
     }
 
@@ -448,7 +451,8 @@ static void crossover(Genome* dest, const Genome* parentA, const Genome* parentB
     }
 }
 
-void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 popCount)
+void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 popCount,
+                const NeatEvolutionParams& params)
 {
     assert(genomes);
     assert(nextGenomes);
@@ -458,8 +462,7 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
     timept t0 = timeGet();
 
 #if 1
-    FitnessPair fpair[2048];
-    assert(popCount < 2048);
+    FitnessPair* fpair = stack_arr(FitnessPair,popCount);
 
     for(i32 i = 0; i < popCount; ++i) {
         fpair[i] = { i, fitness[i] };
@@ -489,7 +492,10 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
     i32 speciesCount = 0;
     f64 biggestDist = 0.0;
 
-    constexpr f64 compatibilityThreshold = 0.6;
+    const f64 c1 = params.compC1;
+    const f64 c2 = params.compC2;
+    const f64 c3 = params.compC3;
+    const f64 compatibilityThreshold = params.compT;
 
     for(i32 i = 0; i < parentCount; ++i) {
         Genome& g = *genomes[i];
@@ -497,7 +503,7 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
         bool found = false;
         for(i32 s = 0; s < speciesCount; ++s) {
             f64 dist = compatibilityDistance(g.genes, speciesRepGenes[s], g.geneCount,
-                                             speciesRepGeneCount[s], 1.0, 1.0, 0.4);
+                                             speciesRepGeneCount[s], c1, c2, c3);
             biggestDist = max(dist, biggestDist);
             if(dist < compatibilityThreshold) {
                 g.species = s;

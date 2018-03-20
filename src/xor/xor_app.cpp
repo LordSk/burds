@@ -19,6 +19,7 @@ AppWindow window;
 Genome* xorCurgen[XOR_COUNT];
 Genome* xorNextGen[XOR_COUNT];
 f64 xorFitness[XOR_COUNT];
+NeatEvolutionParams evolParam;
 
 struct GenerationStats {
     i32 number = 0;
@@ -93,7 +94,7 @@ void handleEvent(SDL_Event* event)
         }
 
         if(event->key.keysym.sym == SDLK_e) {
-           neatEvolve(xorCurgen, xorNextGen, xorFitness, XOR_COUNT);
+           neatEvolve(xorCurgen, xorNextGen, xorFitness, XOR_COUNT, evolParam);
            return;
         }
     }
