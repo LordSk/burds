@@ -73,6 +73,83 @@ i32 compareNeatNNComputations(void const* a, void const* b)
     return 0;
 }
 
+static void sortComputationsByDependency(NeatNN::Computation* computations, const i32 compCount,
+                                         i16 firstOutNode, i16 lastOutNodePlusOne, const i32 nodeCount)
+{
+    i16* dependList = stack_arr(i16,nodeCount);
+    i16* nextDependList = stack_arr(i16,nodeCount);
+    i32 nextDependListCount = 0;
+    i32 sortCompCount = compCount;
+
+    // first populate depend list (output nodes)
+    for(i16 o = firstOutNode; o != lastOutNodePlusOne; ++o) {
+        nextDependList[nextDependListCount++] = o;
+    }
+
+    while(nextDependListCount > 0) {
+        assert(nextDependListCount <= nodeCount);
+        memmove(dependList, nextDependList, sizeof(dependList[0]) * nextDependListCount);
+        const i32 dependListCount = nextDependListCount;
+        nextDependListCount = 0;
+
+        for(i32 d = 0; d < dependListCount; ++d) {
+            const i16 dependNodeId = dependList[d];
+
+            // bubble sort (nodeOut == dependNodeId -> goes to end)
+            bool bubble = true;
+            while(bubble) {
+                bubble = false;
+                for(i32 s = 1; s < sortCompCount; ++s) {
+                    if(computations[s-1].nodeOut == dependNodeId &&
+                       computations[s].nodeOut != dependNodeId) {
+                        // swap
+                        NeatNN::Computation temp = computations[s];
+                        computations[s] = computations[s-1];
+                        computations[s-1] = temp;
+                        bubble = true;
+                    }
+                }
+            }
+
+            // find how many we sorted down
+            i32 where = -1;
+            for(i32 s = sortCompCount-1; s >= 0; s--) {
+                if(computations[s].nodeOut != dependNodeId) {
+                    where = s + 1;
+                    break;
+                }
+            }
+
+            // shorten sortCount, prepare next dependency batch
+            if(where != -1 && where != sortCompCount) {
+                // get all the nodes to depend on
+                for(i32 t = where; t < sortCompCount; ++t) {
+                    const i16 nodeIn = computations[t].nodeIn;
+
+                    // add unique nodeId entry
+                    bool found = false;
+                    for(i32 nd = 0; nd < nextDependListCount; ++nd) {
+                        if(nextDependList[nd] == nodeIn) {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if(!found) {
+                        nextDependList[nextDependListCount++] = nodeIn;
+                    }
+                }
+                sortCompCount = where;
+            }
+        }
+    }
+
+    /*LOG("----- computations after sorting --------");
+    for(i32 i = 0; i < compCount; i++) {
+        LOG("nodeIn=%d nodeOut=%d", computations[i].nodeIn, computations[i].nodeOut);
+    }*/
+}
+
 void neatGenomeMakeNN(Genome** genomes, const i32 count, NeatNN** nn)
 {
     i64 size = 0;
@@ -96,19 +173,50 @@ void neatGenomeMakeNN(Genome** genomes, const i32 count, NeatNN** nn)
         nn[i]->computations = (NeatNN::Computation*)(nn[i]->nodeValues + g.totalNodeCount);
 
         const i32 geneCount = g.geneCount;
+        i32 compCount = 0;
         for(i32 j = 0; j < geneCount; ++j) {
             const Gene& gene = g.genes[j];
             if(g.geneDisabled[j]) continue;
-            nn[i]->computations[j] = { gene.nodeIn, gene.nodeOut, gene.weight };
+            assert(gene.nodeIn >= 0 && gene.nodeIn < g.totalNodeCount);
+            assert(gene.nodeOut >= 0 && gene.nodeOut < g.totalNodeCount);
+            nn[i]->computations[compCount++] = { gene.nodeIn, gene.nodeOut, gene.weight };
         }
 
-        qsort(nn[i]->computations, geneCount, sizeof(NeatNN::Computation), compareNeatNNComputations);
+        sortComputationsByDependency(nn[i]->computations, compCount,
+                                     g.inputNodeCount, g.inputNodeCount + g.outputNodeCount,
+                                     g.totalNodeCount);
+        //qsort(nn[i]->computations, compCount, sizeof(NeatNN::Computation), compareNeatNNComputations);
 
-        nn[i]->computationsCount = geneCount;
+        nn[i]->computationsCount = compCount;
         block += nnSize[i];
     }
 
     LOG("NEAT> allocated %d NeatNN, size=%lld", count, size);
+}
+
+void neatNnPropagate(NeatNN** nn, const i32 nnCount)
+{
+    for(i32 i = 0; i < nnCount; ++i) {
+        const i32 compCount = nn[i]->computationsCount;
+        const NeatNN::Computation* computations = nn[i]->computations;
+        f64* nodeValues = nn[i]->nodeValues;
+
+        i16 curNoteOut = computations[0].nodeOut;
+        f64 value = 0.0;
+
+        for(i32 c = 0; c < compCount; ++c) {
+            const NeatNN::Computation& comp = computations[c];
+            if(curNoteOut == comp.nodeOut) {
+                value += comp.weight * nodeValues[comp.nodeIn];
+            }
+            else {
+                nodeValues[curNoteOut] = tanh(value);
+                curNoteOut = comp.nodeOut;
+                value = comp.weight * nodeValues[comp.nodeIn];
+            }
+        }
+        nodeValues[curNoteOut] = tanh(value);
+    }
 }
 
 void neatNnDealloc(void* ptr)
@@ -159,7 +267,7 @@ static void resetStructuralChanges()
     g_structMatchesFound = 0;
 }
 
-// I think this way of checking if a structural change is equivalent works
+// I think this way of checking structural change equivalence works
 // TODO: test it
 static i32 newInnovationNumber(i16 nodeIn, i16 nodeOut, const NodePos& nodePosIn, const NodePos& nodePosOut)
 {
@@ -591,11 +699,11 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
         //Genome& g = *genomes[i];
 
         // change weight
-        if(randf64(0.0, 1.0) < 0.5) {
+        if(randf64(0.0, 1.0) < params.mutateWeight) {
             i32 gid = randi64(0, g.geneCount-1);
 
             // add to weight (80%) or reset weight (20%)
-            if(randf64(0.0, 1.0) < 0.8) {
+            if(randf64(0.0, 1.0) < (1.0 - params.mutateResetWeight)) {
                 g.genes[gid].weight += randf64(-0.5, 0.5);
             }
             else {
@@ -604,7 +712,7 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
         }
 
         // add connection
-        if(randf64(0.0, 1.0) < 0.5) {
+        if(randf64(0.0, 1.0) < params.mutateAddConn) {
             const i32 outputLayer = g.layerCount-1;
 
             i16 nodeIn = randi64(0, g.totalNodeCount-1);
@@ -641,7 +749,7 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
         }
 
         // split connection -> 2 new connections (new node)
-        if(randf64(0.0, 1.0) < 0.5) {
+        if(randf64(0.0, 1.0) < params.mutateAddNode) {
             i32 splitId = randi64(0, g.geneCount-1);
             g.geneDisabled[splitId] = true;
             const i16 splitNodeIn = g.genes[splitId].nodeIn;

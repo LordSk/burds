@@ -18,6 +18,7 @@ AppWindow window;
 
 Genome* xorCurgen[XOR_COUNT];
 Genome* xorNextGen[XOR_COUNT];
+NeatNN* xorNN[XOR_COUNT];
 f64 xorFitness[XOR_COUNT];
 NeatEvolutionParams evolParam;
 
@@ -50,6 +51,8 @@ bool init()
     for(i32 i = 0; i < XOR_COUNT; ++i) {
         xorFitness[i] = randf64(1.0, 10.0);
     }
+
+    evolParam.compT = 0.3;
 
     return true;
 }
@@ -94,7 +97,7 @@ void handleEvent(SDL_Event* event)
         }
 
         if(event->key.keysym.sym == SDLK_e) {
-           neatEvolve(xorCurgen, xorNextGen, xorFitness, XOR_COUNT, evolParam);
+           nextGeneration();
            return;
         }
     }
@@ -106,7 +109,31 @@ void resetSimulation()
     curGenStats = {};
     memset(pastGenStats, 0, sizeof(pastGenStats));
 
-    neatGenomeInit(xorCurgen, XOR_COUNT, 2, 1);
+    neatGenomeInit(xorCurgen, XOR_COUNT, 3, 1);
+    neatGenomeMakeNN(xorCurgen, XOR_COUNT, xorNN);
+}
+
+void nextGeneration()
+{
+    // calculate fitness
+    for(i32 i = 0; i < XOR_COUNT; i++) {
+        xorNN[i]->nodeValues[0] = randi64(0, 1);
+        xorNN[i]->nodeValues[1] = randi64(0, 1);
+        xorNN[i]->nodeValues[2] = 1; // bias
+    }
+
+    neatNnPropagate(xorNN, XOR_COUNT);
+
+    for(i32 i = 0; i < XOR_COUNT; i++) {
+        f64 expected = (i32)xorNN[i]->nodeValues[0] ^ (i32)xorNN[i]->nodeValues[1];
+        f64 output = (xorNN[i]->nodeValues[3] + 1.0) * 0.5;
+        assert(expected == 0.0 || expected == 1.0);
+        assert(output >= 0.0 && output <= 1.0);
+        xorFitness[i] = 1000.0 * (1.0 - fabs(expected - output));
+    }
+
+    neatEvolve(xorCurgen, xorNextGen, xorFitness, XOR_COUNT, evolParam);
+    neatGenomeMakeNN(xorCurgen, XOR_COUNT, xorNN);
 }
 
 void ImGui_ColoredRect(const ImVec2& size, const ImVec4& color)

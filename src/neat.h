@@ -50,7 +50,7 @@ struct NeatEvolutionParams
     f64 compC1 = 1.0; // compatibility distance DISJOINT factor
     f64 compC2 = 1.0; // compatibility distance EXCESS factor
     f64 compC3 = 0.4; // compatibility distance WEIGHT factor
-    f64 compT = 0.6; // compatibility threshold
+    f64 compT  = 0.6; // compatibility threshold
     f64 crossoverKeepDisabled = 0.75; // crossover chance to keep a gene disabled
     f64 mutateWeight = 0.8; // mutation chance to alter a connection weight
     f64 mutateResetWeight = 0.1; // mutation chance ton reset a weight if chosen for alteration
@@ -63,6 +63,7 @@ void neatGenomeDealloc(void* ptr);
 
 void neatGenomeInit(Genome** genomes, const i32 count, i32 inputCount, i32 outputCount);
 void neatGenomeMakeNN(Genome** genomes, const i32 count, NeatNN** nn);
+void neatNnPropagate(NeatNN** nn, const i32 nnCount);
 void neatNnDealloc(void* ptr);
 
 void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 popCount,
