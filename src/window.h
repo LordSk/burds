@@ -70,7 +70,7 @@ struct AppWindow
         return true;
     }
 
-    inline void uiUpdate()
+    inline void uiNewFrame()
     {
         imguiUpdate(ims);
     }

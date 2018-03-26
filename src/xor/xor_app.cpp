@@ -21,11 +21,13 @@ Genome* xorNextGen[XOR_COUNT];
 NeatNN* xorNN[XOR_COUNT];
 f64 xorFitness[XOR_COUNT];
 NeatEvolutionParams evolParam;
+NeatSpeciesStagnation speciesStagnation;
 
 struct GenerationStats {
     i32 number = 0;
     f64 maxFitness = 0.0;
     f64 avgFitness = 0.0;
+    f64 avgNodeCount = 0.0;
 };
 
 i32 generationNumber = 0;
@@ -37,6 +39,14 @@ f64 outMin = 1.0;
 f64 outMax = 0.0;
 
 i32 dbgViewerId = 0;
+bool dbgAutoRun = true;
+bool dbgAutoSelectBest = true;
+
+bool doneFinding = false;
+i32 evolutionTries = 0;
+
+Genome testGen;
+NeatNN* testNN;
 
 bool init()
 {
@@ -48,11 +58,35 @@ bool init()
     neatGenomeAlloc(xorNextGen, XOR_COUNT);
     resetSimulation();
 
-    for(i32 i = 0; i < XOR_COUNT; ++i) {
-        xorFitness[i] = randf64(1.0, 10.0);
-    }
+    evolParam.compC2 = 2.0;
+    evolParam.compC3 = 3.0;
+    evolParam.compT = 1.0;
+    //evolParam.mutateAddNode = 0.01;
 
-    evolParam.compT = 0.3;
+#if 0
+    testGen.inputNodeCount = 2;
+    testGen.outputNodeCount = 1;
+    mem_zero(testGen.layerNodeCount);
+    mem_zero(testGen.nodePos);
+    mem_zero(testGen.geneDisabled);
+
+    testGen.genes[testGen.geneCount++] = Gene{0, 0, 2, -1.992};
+    testGen.geneDisabled[0] = true;
+    testGen.genes[testGen.geneCount++] = Gene{1, 1, 2, -0.592};
+    testGen.genes[testGen.geneCount++] = Gene{3, 1, 3, -1.187};
+    testGen.genes[testGen.geneCount++] = Gene{4, 3, 2, -0.973};
+    testGen.genes[testGen.geneCount++] = Gene{48, 1, 4, 0.560};
+    testGen.genes[testGen.geneCount++] = Gene{49, 4, 2, 0.311};
+    testGen.genes[testGen.geneCount++] = Gene{142, 1, 5, 0.572};
+    testGen.genes[testGen.geneCount++] = Gene{143, 5, 2, -1.018};
+    testGen.genes[testGen.geneCount++] = Gene{361, 3, 5, -1.191};
+
+    testGen.totalNodeCount = 6;
+    testGen.species = 0xdeadbeef;
+
+    Genome* ptr = &testGen;
+    neatGenomeMakeNN(&ptr, 1, &testNN, true);
+#endif
 
     return true;
 }
@@ -105,34 +139,109 @@ void handleEvent(SDL_Event* event)
 
 void resetSimulation()
 {
+    doneFinding = false;
+    dbgAutoSelectBest = true;
+
     generationNumber = 0;
     curGenStats = {};
+    lastGenStats = {};
     memset(pastGenStats, 0, sizeof(pastGenStats));
 
-    neatGenomeInit(xorCurgen, XOR_COUNT, 3, 1);
+    speciesStagnation = {};
+    neatGenomeInit(xorCurgen, XOR_COUNT, 2, 1);
     neatGenomeMakeNN(xorCurgen, XOR_COUNT, xorNN);
 }
 
 void nextGeneration()
 {
-    // calculate fitness
-    for(i32 i = 0; i < XOR_COUNT; i++) {
-        xorNN[i]->nodeValues[0] = randi64(0, 1);
-        xorNN[i]->nodeValues[1] = randi64(0, 1);
-        xorNN[i]->nodeValues[2] = 1; // bias
+    if(doneFinding) {
+        return;
     }
 
-    neatNnPropagate(xorNN, XOR_COUNT);
-
-    for(i32 i = 0; i < XOR_COUNT; i++) {
-        f64 expected = (i32)xorNN[i]->nodeValues[0] ^ (i32)xorNN[i]->nodeValues[1];
-        f64 output = (xorNN[i]->nodeValues[3] + 1.0) * 0.5;
-        assert(expected == 0.0 || expected == 1.0);
-        assert(output >= 0.0 && output <= 1.0);
-        xorFitness[i] = 1000.0 * (1.0 - fabs(expected - output));
+    if(generationNumber > 200) {
+        doneFinding = true;
+        return;
     }
 
-    neatEvolve(xorCurgen, xorNextGen, xorFitness, XOR_COUNT, evolParam);
+    curGenStats = {};
+    curGenStats.number = generationNumber++;
+
+    mem_zero(xorFitness);
+
+    u8 correctCount[XOR_COUNT];
+    mem_zero(correctCount);
+
+#if 0
+    for(i32 i = 0; i < XOR_COUNT; i++) {
+        xorFitness[i] = randf64(1.0, 100.0);
+    }
+
+#else
+    i32 input[4][2] = { {0, 0}, {1, 0}, {0, 1}, {1, 1} };
+    i32 expected[4] = { 0, 1, 1, 0};
+
+    const i32 inputCount = xorCurgen[0]->inputNodeCount;
+
+    for(i32 t = 0; t < 4; t++) {
+        for(i32 i = 0; i < XOR_COUNT; i++) {
+            xorNN[i]->nodeValues[0] = input[t][0];
+            xorNN[i]->nodeValues[1] = input[t][1];
+        }
+
+        neatNnPropagate(xorNN, XOR_COUNT);
+
+        f64 expect = expected[t];
+        assert(expect == 0.0 || expect == 1.0);
+
+        // calculate fitness
+        for(i32 i = 0; i < XOR_COUNT; i++) {
+            f64 nodeValOut = xorNN[i]->nodeValues[inputCount];
+            f64 output = (nodeValOut + 1.0) * 0.5;
+            assert(output >= 0.0 && output <= 1.0);
+            i32 bOut = output < 0.5 ? 0 : 1;
+            xorFitness[i] += fabs(expect - output);
+
+            if(expect == bOut) {
+                correctCount[i]++;
+            }
+        }
+    }
+
+    for(i32 i = 0; i < XOR_COUNT; i++) {
+        xorFitness[i] = 4.0 - xorFitness[i];
+        xorFitness[i] = xorFitness[i] * xorFitness[i];
+    }
+#endif
+
+    f64 totalFitness = 0.0;
+    i64 totalNodeCount = 0;
+    f64 maxFitness = 0.0;
+    for(i32 i = 0; i < XOR_COUNT; i++) {
+        totalFitness += xorFitness[i];
+        maxFitness = max(maxFitness, xorFitness[i]);
+        totalNodeCount += xorCurgen[i]->totalNodeCount;
+    }
+
+    curGenStats.avgFitness = totalFitness / XOR_COUNT;
+    curGenStats.maxFitness = maxFitness;
+    curGenStats.avgNodeCount = totalNodeCount / (f64)XOR_COUNT;
+
+    lastGenStats = curGenStats;
+    memmove(pastGenStats, pastGenStats+1, sizeof(pastGenStats) - sizeof(pastGenStats[0]));
+    pastGenStats[STATS_HISTORY_COUNT-1] = lastGenStats;
+
+    for(i32 i = 0; i < XOR_COUNT; i++) {
+        if(correctCount[i] == 4) {
+            doneFinding = true;
+            LOG("DONE FINDING (%d is a valid xor gate)", i);
+            dbgViewerId = i;
+            dbgAutoSelectBest = false;
+            return;
+        }
+    }
+
+    LOG("evolution %d ----------", generationNumber);
+    neatEvolve(xorCurgen, xorNextGen, xorFitness, XOR_COUNT, &speciesStagnation, evolParam, true);
     neatGenomeMakeNN(xorCurgen, XOR_COUNT, xorNN);
 }
 
@@ -254,10 +363,11 @@ void ui_xorViewer()
 {
     ImGui::Begin("XOR viewer");
 
-    static bool autoSelectBest = true;
-    ImGui::Checkbox("Auto-select best", &autoSelectBest);
+    ImGui::Checkbox("Auto run simulation", &dbgAutoRun);
 
-    if(autoSelectBest) {
+    ImGui::Checkbox("Auto-select best", &dbgAutoSelectBest);
+
+    if(dbgAutoSelectBest) {
         f64 bestFitness = 0;
         for(i32 i = 0; i < XOR_COUNT; ++i) {
             if(xorFitness[i] > bestFitness) {
@@ -298,6 +408,24 @@ void ui_xorViewer()
 
     ImGui_NeatNN(xorCurgen[dbgViewerId]);
 
+    if(ImGui::CollapsingHeader("Propgate")) {
+        static i32 input1 = 0;
+        static i32 input2 = 1;
+
+        ImGui::PushItemWidth(200);
+        ImGui::InputInt("##xor_input1", &input1); ImGui::SameLine();
+        ImGui::InputInt("##xor_input2", &input2); ImGui::SameLine();
+
+        if(ImGui::Button("Propagate")) {
+            xorNN[dbgViewerId]->nodeValues[0] = input1;
+            xorNN[dbgViewerId]->nodeValues[1] = input2;
+            neatNnPropagate(&xorNN[dbgViewerId], 1);
+        }
+        ImGui::PopItemWidth();
+
+        f64 out = (xorNN[dbgViewerId]->nodeValues[2] + 1.0) * 0.5;
+        ImGui::Text("output: %g (%d)", out, out < 0.5 ? 0 : 1);
+    }
 
     static i32 versusId1 = 0;
     static i32 versusId2 = 1;
@@ -322,11 +450,56 @@ void ui_xorViewer()
         ImGui_NeatNN(xorCurgen[outId]);
     }
 
+    if(ImGui::CollapsingHeader("Compatibility")) {
+        ImGui::PushItemWidth(200);
+        ImGui::InputInt("##comp_vs_1", &versusId1); ImGui::SameLine();
+        ImGui::InputInt("##comp_vs_2", &versusId2);
+        ImGui::PopItemWidth();
+
+        ImGui::TextColored(ImVec4(0, 1, 1, 1), "Compatibility: %g",
+                           neatTestCompability(xorCurgen[versusId1], xorCurgen[versusId2], evolParam));
+    }
+
     ImGui::End();
 }
 
+#if 0
+void ui_textXorViewer()
+{
+    ImGui::Begin("Test XOR viewer");
+
+    ImGui_GeneList(&testGen);
+
+    ImGui::Separator();
+
+    ImGui_NeatNN(&testGen);
+
+    if(ImGui::CollapsingHeader("Propgate")) {
+        static i32 input1 = 0;
+        static i32 input2 = 1;
+
+        ImGui::PushItemWidth(200);
+        ImGui::InputInt("##xor_input1", &input1); ImGui::SameLine();
+        ImGui::InputInt("##xor_input2", &input2); ImGui::SameLine();
+
+        if(ImGui::Button("Propagate")) {
+            testNN->nodeValues[0] = input1;
+            testNN->nodeValues[1] = input2;
+            neatNnPropagate(&testNN, 1);
+        }
+        ImGui::PopItemWidth();
+
+        f64 out = (testNN->nodeValues[2] + 1.0) * 0.5;
+        ImGui::Text("output: %g (%d)", out, out < 0.5 ? 0 : 1);
+    }
+
+    ImGui::End();
+}
+#endif
+
 void ui_subPopulations()
 {
+
 }
 
 void ui_lastGeneration()
@@ -339,6 +512,7 @@ void ui_lastGeneration()
 
     ImGui::TextColored(ImVec4(0, 1, 0, 1), "Fitness max: %g", lastGenStats.maxFitness);
     ImGui::Text("Fitness avg: %g", lastGenStats.avgFitness);
+    ImGui::TextColored(ImVec4(1, 1, 0, 1), "Node count avg: %g", lastGenStats.avgNodeCount);
 
     ImGui::Separator();
 
@@ -349,7 +523,7 @@ void ui_lastGeneration()
         maxPastFitness = max(maxPastFitness, pastFitness[i]);
     }
 
-    ImGui::PushItemWidth(180.0f);
+    ImGui::PushItemWidth(-1);
     ImGui::PlotLines("##max_fitness", pastFitness, IM_ARRAYSIZE(pastFitness),
                          0, NULL, 0.0f, maxPastFitness, ImVec2(0,50));
 
@@ -369,34 +543,14 @@ void doUI()
 
 void updateNNs()
 {
-
-}
-
-void newGeneration()
-{
-#if 0
-    LOG("outMin=%g outMax=%g", outMin, outMax);
-    outMin = 1.0;
-    outMax = 0.0;
-
-    lastGenStats = curGenStats;
-    memmove(pastGenStats, pastGenStats+1, sizeof(pastGenStats) - sizeof(pastGenStats[0]));
-    pastGenStats[STATS_HISTORY_COUNT-1] = lastGenStats;
-
-    curGenStats = {};
-    curGenStats.number = generationNumber++;
-
-    LOG("#%d maxFitness=%.5f avg=%.5f", lastGenStats.number, lastGenStats.maxFitness,
-        lastGenStats.avgFitness);
-
-    resetMap();
-    resetFrogs();
-#endif
+    if(dbgAutoRun) {
+      nextGeneration();
+    }
 }
 
 void newFrame()
 {
-    window.uiUpdate();
+    window.uiNewFrame();
     doUI();
 
     updateNNs();
