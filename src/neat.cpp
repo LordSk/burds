@@ -35,24 +35,13 @@ void neatGenomeInit(Genome** genomes, const i32 count, i32 inputCount, i32 outpu
         g.outputNodeCount = outputCount;
         g.totalNodeCount = inputCount + outputCount;
         g_innovationNumber = g.totalNodeCount; // TODO: have the user prove his one global innovation number
-        g.layerCount = 2;
         g.geneCount = 0;
         g.species = -1;
         mem_zero(g.geneDisabled);
-        mem_zero(g.layerNodeCount);
         mem_zero(g.nodePos);
 
         for(i16 n = 0; n < g.totalNodeCount; ++n) {
             g.nodeOriginMarker[n] = n;
-        }
-
-        for(i16 n = 0; n < inputCount; ++n) {
-            g.nodePos[n].layer = 0;
-            g.nodePos[n].vpos = g.layerNodeCount[0]++;
-        }
-        for(i16 n = 0; n < outputCount; ++n) {
-            g.nodePos[n+inputCount].layer = 1;
-            g.nodePos[n+inputCount].vpos = g.layerNodeCount[1]++;
         }
 
         for(i16 in = 0; in < inputCount; ++in) {
@@ -157,136 +146,6 @@ static void sortComputationsByDependency(NeatNN::Computation* computations, cons
             }
         }
     }
-
-    /*LOG("----- computations after sorting --------");
-    for(i32 i = 0; i < compCount; i++) {
-        LOG("nodeIn=%d nodeOut=%d", computations[i].nodeIn, computations[i].nodeOut);
-    }*/
-}
-
-static void sortGenesByDependencyAndPositionNodes(Genome* genome)
-{
-    Genome& g = *genome;
-    Gene* genes = g.genes;
-    u8* geneDisabled = g.geneDisabled;
-    const i32 geneCount = g.geneCount;
-    NodePos* nodePos = g.nodePos;
-    i16 firstOutNode = g.inputNodeCount;
-    i16 lastOutNodePlusOne = g.inputNodeCount + g.outputNodeCount;
-    const i32 nodeCount = g.totalNodeCount;
-    u8* layerNodeCount = g.layerNodeCount;
-
-    i16* dependList = stack_arr(i16,nodeCount);
-    i16* nextDependList = stack_arr(i16,nodeCount);
-    i32 nextDependListCount = 0;
-    i32 sortGeneCount = geneCount;
-    i32 layer = 0;
-
-    for(i16 n = 0; n < nodeCount; n++) {
-        nodePos[n].layer = -1;
-    }
-
-    // first populate depend list (output nodes)
-    for(i16 o = firstOutNode; o != lastOutNodePlusOne; ++o) {
-        nextDependList[nextDependListCount++] = o;
-    }
-
-    while(nextDependListCount > 0) {
-        assert(nextDependListCount <= nodeCount);
-        memmove(dependList, nextDependList, sizeof(dependList[0]) * nextDependListCount);
-        const i32 dependListCount = nextDependListCount;
-        nextDependListCount = 0;
-
-        layerNodeCount[layer] = 0;
-
-        for(i32 d = 0; d < dependListCount; ++d) {
-            const i16 dependNodeId = dependList[d];
-
-            // bubble sort (nodeOut == dependNodeId -> goes to end)
-            bool bubble = true;
-            while(bubble) {
-                bubble = false;
-                for(i32 s = 1; s < sortGeneCount; ++s) {
-                    if(genes[s-1].nodeOut == dependNodeId &&
-                       genes[s].nodeOut != dependNodeId) {
-                        // swap
-                        Gene temp = genes[s];
-                        genes[s] = genes[s-1];
-                        genes[s-1] = temp;
-
-                        u8 temp2 = geneDisabled[s];
-                        geneDisabled[s] = geneDisabled[s-1];
-                        geneDisabled[s-1] = temp2;
-
-                        bubble = true;
-                    }
-                }
-            }
-
-            // find how many we sorted down
-            i32 where = -1;
-            for(i32 s = sortGeneCount-1; s >= 0; s--) {
-                if(genes[s].nodeOut != dependNodeId) {
-                    where = s + 1;
-                    break;
-                }
-            }
-
-            // shorten sortCount, prepare next dependency batch
-            if(where != -1 && where != sortGeneCount) {
-                nodePos[dependNodeId].layer = layer;
-                nodePos[dependNodeId].vpos = layerNodeCount[layer]++;
-
-                // get all the nodes to depend on
-                for(i32 t = where; t < sortGeneCount; ++t) {
-                    const i16 nodeIn = genes[t].nodeIn;
-
-                    // add unique nodeId entry
-                    bool found = false;
-                    for(i32 nd = 0; nd < nextDependListCount; ++nd) {
-                        if(nextDependList[nd] == nodeIn) {
-                            found = true;
-                            break;
-                        }
-                    }
-
-                    if(!found) {
-                        nextDependList[nextDependListCount++] = nodeIn;
-                    }
-                }
-                sortGeneCount = where;
-            }
-        }
-
-        layer++;
-    }
-
-    g.layerCount = layer + 1;
-
-    // position
-    layerNodeCount[0] = 0;
-    for(i16 n = 0; n < nodeCount; n++) {
-        if(nodePos[n].layer == -1) {
-            nodePos[n].layer = 0;
-            nodePos[n].vpos = layerNodeCount[0]++;
-
-        }
-        else {
-            nodePos[n].layer = g.layerCount - nodePos[n].layer;
-        }
-    }
-
-#if 0
-    for(i16 n = 0; n < nodeCount; n++) {
-        nodePos[n] = {0, (u8)n};
-    }
-    g.layerNodeCount[0] = nodeCount;
-#endif
-
-    /*LOG("----- computations after sorting --------");
-    for(i32 i = 0; i < compCount; i++) {
-        LOG("nodeIn=%d nodeOut=%d", genes[i].nodeIn, genes[i].nodeOut);
-    }*/
 }
 
 static void sortGenesByHistoricalMarker(Genome* genome)
@@ -337,6 +196,7 @@ void neatGenomeMakeNN(Genome** genomes, const i32 count, NeatNN** nn, bool verbo
         nn[i] = (NeatNN*)block;
         nn[i]->nodeValues = (f64*)(nn[i] + 1);
         nn[i]->computations = (NeatNN::Computation*)(nn[i]->nodeValues + g.totalNodeCount);
+        nn[i]->nodeCount = g.totalNodeCount;
 
         const i32 geneCount = g.geneCount;
         i32 compCount = 0;
@@ -348,10 +208,10 @@ void neatGenomeMakeNN(Genome** genomes, const i32 count, NeatNN** nn, bool verbo
             nn[i]->computations[compCount++] = { gene.nodeIn, gene.nodeOut, gene.weight };
         }
 
+        // FIXME: some "backwards" do not propagate as expected (doing 2 propagates yield a different result)
         sortComputationsByDependency(nn[i]->computations, compCount,
                                      g.inputNodeCount, g.inputNodeCount + g.outputNodeCount,
                                      g.totalNodeCount);
-        //qsort(nn[i]->computations, compCount, sizeof(NeatNN::Computation), compareNeatNNComputations);
 
         nn[i]->computationsCount = compCount;
         block += nnSize[i];
@@ -681,9 +541,7 @@ static void crossover(Genome* dest, const Genome* parentA, const Genome* parentB
     dest->inputNodeCount = inputCount;
     dest->outputNodeCount = outputCount;
     dest->totalNodeCount = inputCount + outputCount;
-    dest->layerCount = 2;
     dest->species = parentA->species;
-    mem_zero(dest->layerNodeCount);
     mem_zero(dest->nodePos);
 
     const i32 geneCountOut2 = geneCountOut;
@@ -993,30 +851,6 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
             g.genes[con2].historicalMarker = newInnovationNumber(g.genes[con2].nodeIn,
                                                                  g.genes[con2].nodeOut,
                                                                  g.nodeOriginMarker);
-
-#if 0
-            // add a new layer if needed
-            if(g.nodePos[splitNodeIn].layer + 1 == g.nodePos[splitNodeOut].layer) {
-                assert(g.layerCount < NEAT_MAX_LAYERS);
-                g.layerCount++;
-                const i32 expandFrom = g.nodePos[splitNodeOut].layer;
-
-                for(i32 n = 0; n < g.totalNodeCount; ++n) {
-                    if(g.nodePos[n].layer >= expandFrom) {
-                        g.nodePos[n].layer++;
-                    }
-                }
-
-                memmove(&g.layerNodeCount[expandFrom+1],
-                        &g.layerNodeCount[expandFrom],
-                        (g.layerCount-expandFrom) * sizeof(g.layerNodeCount[0]));
-                g.layerNodeCount[expandFrom] = 0;
-            }
-
-            i32 layer = g.nodePos[splitNodeIn].layer + 1;
-            g.nodePos[newNodeId].layer = layer;
-            g.nodePos[newNodeId].vpos = g.layerNodeCount[layer]++;
-#endif
             newNodeMutationCount++;
         }
     }
@@ -1034,6 +868,42 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
     memmove(genomes[0], nextGenomes[0], sizeof(Genome) * popCount);
 
     if(verbose) LOG("NEAT> evolution took %.3fs", timeToMicrosec(timeGet() - t0)/1000000.0);
+}
+
+void neatGenomeComputeNodePos(Genome** genomes, const i32 popCount)
+{
+    for(i32 i = 0; i < popCount; ++i) {
+        Genome& genome = *genomes[i];
+        Gene* genes = genome.genes;
+        const i32 geneCount = genome.geneCount;
+        NodePos* nodePos = genome.nodePos;
+        i32 nodeProcessedLast = genome.inputNodeCount + genome.outputNodeCount - 1;
+        i32 lastHiddenLayer = 0;
+        i32 layerNodeCount[NEAT_MAX_LAYERS] = {0};
+
+        for(i32 j = 0; j < genome.inputNodeCount; ++j) {
+            nodePos[j].layer = 0;
+        }
+
+        for(i32 j = 0; j < geneCount; ++j) {
+            Gene& g = genes[j];
+
+            if(g.nodeOut > nodeProcessedLast) {
+                nodePos[g.nodeOut].layer = nodePos[g.nodeIn].layer + 1;
+                lastHiddenLayer = max(lastHiddenLayer, nodePos[g.nodeOut].layer);
+                nodeProcessedLast = g.nodeOut;
+            }
+        }
+
+        for(i32 j = 0; j < genome.outputNodeCount; ++j) {
+            nodePos[j + genome.inputNodeCount].layer = lastHiddenLayer + 1;
+        }
+
+        const i32 totalNodeCount = genome.totalNodeCount;
+        for(i32 j = 0; j < totalNodeCount; ++j) {
+            nodePos[j].vpos = layerNodeCount[nodePos[j].layer]++;
+        }
+    }
 }
 
 void neatTestTryReproduce(const Genome& g1, const Genome& g2)

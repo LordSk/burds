@@ -1,5 +1,7 @@
 #pragma once
 #include "base.h"
+#include <assert.h>
+#include <string.h>
 
 struct Gene
 {
@@ -24,10 +26,8 @@ struct Genome
 {
     Gene genes[NEAT_MAX_GENES];
     u8 geneDisabled[NEAT_MAX_GENES];
-    u8 layerNodeCount[NEAT_MAX_LAYERS];
     NodePos nodePos[NEAT_MAX_NODES];
     i32 nodeOriginMarker[NEAT_MAX_NODES];
-    i32 layerCount = 0;
     i32 geneCount = 0;
     i16 inputNodeCount = 0;  // TODO: this is constant, no need to store it in EVERY genome
     i16 outputNodeCount = 0; // same here
@@ -45,6 +45,14 @@ struct NeatNN
     f64* nodeValues;
     Computation* computations; // sorted
     i32 computationsCount;
+    i32 nodeCount;
+
+    inline void setInputs(f64* inputs, i32 count) {
+        assert(count < nodeCount);
+        memmove(nodeValues, inputs, sizeof(nodeValues[0]) * count);
+        // FIXME: this mitigate "backwards" connections making propagation inconsistent
+        memset(nodeValues + count, 0, sizeof(nodeValues[0]) * (nodeCount - count));
+    }
 };
 
 struct NeatEvolutionParams
@@ -71,6 +79,7 @@ void neatGenomeDealloc(void* ptr);
 
 void neatGenomeInit(Genome** genomes, const i32 count, i32 inputCount, i32 outputCount);
 void neatGenomeMakeNN(Genome** genomes, const i32 count, NeatNN** nn, bool verbose = false);
+void neatGenomeComputeNodePos(Genome** genomes, const i32 popCount);
 void neatNnPropagate(NeatNN** nn, const i32 nnCount);
 void neatNnDealloc(void* ptr);
 

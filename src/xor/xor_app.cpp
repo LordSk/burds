@@ -177,15 +177,14 @@ void nextGeneration()
     }
 
 #else
-    i32 input[4][2] = { {0, 0}, {1, 0}, {0, 1}, {1, 1} };
+    f64 input[4][2] = { {0, 0}, {1, 0}, {0, 1}, {1, 1} };
     i32 expected[4] = { 0, 1, 1, 0};
 
     const i32 inputCount = xorCurgen[0]->inputNodeCount;
 
     for(i32 t = 0; t < 4; t++) {
         for(i32 i = 0; i < XOR_COUNT; i++) {
-            xorNN[i]->nodeValues[0] = input[t][0];
-            xorNN[i]->nodeValues[1] = input[t][1];
+            xorNN[i]->setInputs(input[t], 2);
         }
 
         neatNnPropagate(xorNN, XOR_COUNT);
@@ -243,6 +242,7 @@ void nextGeneration()
     LOG("evolution %d ----------", generationNumber);
     neatEvolve(xorCurgen, xorNextGen, xorFitness, XOR_COUNT, &speciesStagnation, evolParam, true);
     neatGenomeMakeNN(xorCurgen, XOR_COUNT, xorNN);
+    neatGenomeComputeNodePos(xorCurgen, XOR_COUNT);
 }
 
 void ImGui_ColoredRect(const ImVec2& size, const ImVec4& color)
@@ -320,13 +320,15 @@ void ImGui_NeatNN(const Genome* genome)
     const f32 linkSpaceWidth = 60.f;
     const f32 nodeRadius = 12.f;
 
+    i32 maxLayer = 0;
     i32 maxVPos = 0;
     for(i32 i = 0; i < g.totalNodeCount; ++i) {
         maxVPos = max(maxVPos, g.nodePos[i].vpos);
+        maxLayer = max(maxLayer, g.nodePos[i].layer);
     }
     maxVPos++;
 
-    ImVec2 frameSize(g.layerCount * (linkSpaceWidth + nodeSpace.x), nodeSpace.y * maxVPos);
+    ImVec2 frameSize(maxLayer * (linkSpaceWidth + nodeSpace.x), nodeSpace.y * maxVPos);
     ImVec2 pos = window->DC.CursorPos;
     ImRect bb(pos, pos + frameSize);
     ImGui::ItemSize(bb);
@@ -417,8 +419,8 @@ void ui_xorViewer()
         ImGui::InputInt("##xor_input2", &input2); ImGui::SameLine();
 
         if(ImGui::Button("Propagate")) {
-            xorNN[dbgViewerId]->nodeValues[0] = input1;
-            xorNN[dbgViewerId]->nodeValues[1] = input2;
+            f64 inputs[2] = {(f64)input1, (f64)input2};
+            xorNN[dbgViewerId]->setInputs(inputs, 2);
             neatNnPropagate(&xorNN[dbgViewerId], 1);
         }
         ImGui::PopItemWidth();
