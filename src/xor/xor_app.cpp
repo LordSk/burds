@@ -21,7 +21,7 @@ Genome* xorNextGen[XOR_COUNT];
 NeatNN* xorNN[XOR_COUNT];
 f64 xorFitness[XOR_COUNT];
 NeatEvolutionParams evolParam;
-NeatSpeciesStagnation speciesStagnation;
+NeatSpeciation speciesStagnation;
 
 struct GenerationStats {
     i32 number = 0;

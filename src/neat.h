@@ -68,17 +68,22 @@ struct NeatEvolutionParams
     f64 mutateAddNode = 0.03; // mutation chance to split an existing connection to add a node in between
 };
 
-struct NeatSpeciesStagnation
+struct NeatSpeciation
 {
+    Genome* speciesRep = nullptr;
+    i32 speciesCount = 0;
+    i32 speciesPopCount[NEAT_MAX_SPECIES] = {0};
     u16 stagnation[NEAT_MAX_SPECIES] = {0};
     f64 maxFitness[NEAT_MAX_SPECIES] = {0};
+
+    ~NeatSpeciation();
 };
 
 void neatGenomeAlloc(Genome** genomes, const i32 count);
 void neatGenomeDealloc(Genome** genomes);
 
 void neatGenomeInit(Genome** genomes, const i32 popCount, i32 inputCount, i32 outputCount,
-                    const NeatEvolutionParams params);
+                    const NeatEvolutionParams& params, NeatSpeciation* speciation);
 void neatGenomeMakeNN(Genome** genomes, const i32 count, NeatNN** nn, bool verbose = false);
 void neatGenomeComputeNodePos(Genome** genomes, const i32 popCount);
 void neatGenomeSpeciation(Genome** genomes, const i32 popCount);
@@ -87,7 +92,7 @@ void neatNnPropagate(NeatNN** nn, const i32 nnCount);
 void neatNnDealloc(NeatNN** nn);
 
 void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 popCount,
-                NeatSpeciesStagnation* speciesStagn, const NeatEvolutionParams& params,
+                NeatSpeciation* neatSpec, const NeatEvolutionParams& params,
                 bool verbose = false);
 
 void neatTestTryReproduce(const Genome& g1, const Genome& g2);

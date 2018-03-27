@@ -5,6 +5,13 @@
 #include <math.h>
 #include <malloc.h>
 
+NeatSpeciation::~NeatSpeciation()
+{
+    if(speciesRep) {
+        free(speciesRep);
+    }
+}
+
 static i32 g_innovationNumber = 0;
 
 // geneCount -> larger genome geneCount
@@ -116,7 +123,7 @@ void neatGenomeDealloc(Genome** genomes)
 }
 
 void neatGenomeInit(Genome** genomes, const i32 popCount, i32 inputCount, i32 outputCount,
-                    const NeatEvolutionParams params)
+                    const NeatEvolutionParams& params, NeatSpeciation* speciation)
 {
     assert(inputCount > 0);
     assert(outputCount > 0);
@@ -145,10 +152,14 @@ void neatGenomeInit(Genome** genomes, const i32 popCount, i32 inputCount, i32 ou
     }
 
     // speciation
-    Gene* speciesRepGenes[NEAT_MAX_SPECIES] = {0};
-    i32 speciesRepGeneCount[NEAT_MAX_SPECIES];
-    i32 speciesPopCount[NEAT_MAX_SPECIES] = {0};
-    i32 speciesCount = 0;
+    assert(speciation->speciesRep == nullptr);
+    speciation->speciesRep = (Genome*)malloc(sizeof(Genome) * NEAT_MAX_SPECIES);
+    mem_zero(speciation->speciesPopCount);
+
+    Genome* speciesRep = speciation->speciesRep;
+    i32* speciesPopCount = speciation->speciesPopCount;
+    i32& speciesCount = speciation->speciesCount;
+    speciesCount = 0;
     f64 biggestDist = 0.0;
 
     const f64 c1 = params.compC1;
@@ -161,10 +172,10 @@ void neatGenomeInit(Genome** genomes, const i32 popCount, i32 inputCount, i32 ou
 
         bool found = false;
         for(i32 s = 0; s < speciesCount; ++s) {
-            if(!speciesRepGenes[s]) continue;
+            if(speciesPopCount[s] == 0) continue;
 
-            f64 dist = compatibilityDistance(g.genes, speciesRepGenes[s], g.geneCount,
-                                             speciesRepGeneCount[s], c1, c2, c3);
+            f64 dist = compatibilityDistance(g.genes, speciesRep[s].genes, g.geneCount,
+                                             speciesRep[s].geneCount, c1, c2, c3);
             biggestDist = max(dist, biggestDist);
             if(dist < compatibilityThreshold) {
                 g.species = s;
@@ -177,9 +188,9 @@ void neatGenomeInit(Genome** genomes, const i32 popCount, i32 inputCount, i32 ou
         if(!found) {
             assert(speciesCount < NEAT_MAX_SPECIES);
             i32 sid = speciesCount++;
-            speciesRepGenes[sid] = g.genes;
-            speciesRepGeneCount[sid] = g.geneCount;
+            speciesRep[sid] = g;
             speciesPopCount[sid] = 1;
+            g.species = sid;
         }
     }
 }
@@ -604,7 +615,7 @@ void neatGenomeSpeciation(Genome** genomes, const i32 popCount, i32* speciesPopC
 }
 
 void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 popCount,
-                NeatSpeciesStagnation* speciesStagn, const NeatEvolutionParams& params, bool verbose)
+                NeatSpeciation* neatSpec, const NeatEvolutionParams& params, bool verbose)
 {
     assert(genomes);
     assert(nextGenomes);
@@ -613,39 +624,36 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
 
     timept t0 = timeGet();
 
-    f64 speciesMaxFitness[NEAT_MAX_SPECIES] = {0};
-    i32 speciesPopCount[NEAT_MAX_SPECIES] = {0};
-    i32 speciesCount = 0;
+    f64 speciesMaxFitness[NEAT_MAX_SPECIES];
+    i32* speciesPopCount = neatSpec->speciesPopCount;
+    i32& speciesCount = neatSpec->speciesCount;
 
     for(i32 i = 0; i < popCount; ++i) {
         const i32 s = genomes[i]->species;
-        assert(s >= 0 && s < NEAT_MAX_SPECIES);
-        speciesCount = max(speciesCount, s+1);
-        speciesPopCount[s]++;
-    }
-
-    for(i32 i = 0; i < popCount; ++i) {
-        const i32 s = genomes[i]->species;
+        assert(s >= 0 && s < speciesCount); // forgot to neatGenomeInit() ?
         speciesMaxFitness[s] = max(fitness[i], speciesMaxFitness[s]);
     }
 
     u8* deleteSpecies = stack_arr(u8,speciesCount);
-#if 0
+#if 1
     constexpr i32 stagnationT = 15;
+    u16* specStagnation = neatSpec->stagnation;
+    f64* specStagMaxFitness = neatSpec->maxFitness;
+
     for(i32 s = 0; s < speciesCount; ++s) {
         deleteSpecies[s] = false;
-        if(speciesMaxFitness[s] <= speciesStagn->maxFitness[s]) {
-            speciesStagn->stagnation[s]++;
+        if(speciesMaxFitness[s] <= specStagMaxFitness[s]) {
+            specStagnation[s]++;
 
-            if(speciesStagn->stagnation[s] > stagnationT) {
-                if(verbose) LOG("NEAT> species %x stagnating (%d)", s, speciesStagn->stagnation[s]);
+            if(specStagnation[s] > stagnationT) {
+                if(verbose) LOG("NEAT> species %x stagnating (%d)", s, specStagnation[s]);
                 deleteSpecies[s] = true;
-                speciesStagn->stagnation[s] = 0;
+                specStagnation[s] = 0;
             }
         }
         else {
-            speciesStagn->maxFitness[s] = speciesMaxFitness[s];
-            speciesStagn->stagnation[s] = 0;
+            specStagMaxFitness[s] = speciesMaxFitness[s];
+            specStagnation[s] = 0;
         }
     }
 #endif
@@ -874,10 +882,13 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
     memmove(genomes[0], nextGenomes[0], sizeof(Genome) * popCount);
 
     // speciation
-    Gene* speciesRepGenes[NEAT_MAX_SPECIES] = {0};
-    i32 speciesRepGeneCount[NEAT_MAX_SPECIES];
-    mem_zero(speciesPopCount);
-    speciesCount = 0;
+    u8 speciesExists[NEAT_MAX_SPECIES] = {0};
+    for(i32 s = 0; s < speciesCount; ++s) {
+        speciesExists[s] = (speciesPopCount[s] != 0);
+    }
+
+    Genome* speciesRep = neatSpec->speciesRep;
+    mem_zero(neatSpec->speciesPopCount);
     f64 biggestDist = 0.0;
 
     const f64 c1 = params.compC1;
@@ -890,10 +901,10 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
 
         bool found = false;
         for(i32 s = 0; s < speciesCount; ++s) {
-            if(!speciesRepGenes[s]) continue;
+            if(!speciesExists[s] && speciesPopCount[s] == 0) continue;
 
-            f64 dist = compatibilityDistance(g.genes, speciesRepGenes[s], g.geneCount,
-                                             speciesRepGeneCount[s], c1, c2, c3);
+            f64 dist = compatibilityDistance(g.genes, speciesRep[s].genes, g.geneCount,
+                                             speciesRep[s].geneCount, c1, c2, c3);
             biggestDist = max(dist, biggestDist);
             if(dist < compatibilityThreshold) {
                 g.species = s;
@@ -905,24 +916,21 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
 
         if(!found) {
             assert(speciesCount < NEAT_MAX_SPECIES);
+
+            // find a species slot
             i32 sid = -1;
-            if(g.species != -1 && speciesPopCount[g.species] == 0) {
-                sid = g.species; // set same species as before
-            }
-            else {
-                for(i32 s = 0; s < NEAT_MAX_SPECIES; ++s) {
-                    if(speciesPopCount[s] == 0) {
-                        sid = s;
-                        break;
-                    }
+            for(i32 s = 0; s < NEAT_MAX_SPECIES; ++s) {
+                if(!speciesExists[s]) {
+                    sid = s;
+                    break;
                 }
-                g.species = sid;
             }
+            assert(sid != -1);
             speciesCount = max(speciesCount, sid+1);
 
-            speciesRepGenes[sid] = g.genes;
-            speciesRepGeneCount[sid] = g.geneCount;
+            speciesRep[sid] = g;
             speciesPopCount[sid] = 1;
+            g.species = sid;
         }
     }
 
@@ -1090,9 +1098,10 @@ void neatTestPropagate()
     f64 output = tanh(weightO * hiddenVal);
 
     NeatEvolutionParams params;
+    NeatSpeciation neatSpec;
     Genome* g;
     neatGenomeAlloc(&g, 1);
-    neatGenomeInit(&g, 1, 2, 1, params);
+    neatGenomeInit(&g, 1, 2, 1, params, &neatSpec);
 
 
 }

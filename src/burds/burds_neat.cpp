@@ -103,7 +103,7 @@ Genome* birdCurGen[BIRD_COUNT];
 Genome* birdNextGen[BIRD_COUNT];
 NeatNN* birdNN[BIRD_COUNT];
 NeatEvolutionParams evolParam;
-NeatSpeciesStagnation speciesStagnation;
+NeatSpeciation neatSpec;
 
 i32 birdAppleEatenCount[BIRD_COUNT];
 f32 birdDistToNextApple[BIRD_COUNT];
@@ -243,8 +243,8 @@ void resetSimulation()
     lastGenStats = {};
     mem_zero(pastGenStats);
 
-    speciesStagnation = {};
-    neatGenomeInit(birdCurGen, BIRD_COUNT, 4, 4, evolParam); // INPUTS: 4, OUPUTS: 4
+    neatSpec = {};
+    neatGenomeInit(birdCurGen, BIRD_COUNT, 4, 4, evolParam, &neatSpec); // INPUTS: 4, OUPUTS: 4
     neatGenomeMakeNN(birdCurGen, BIRD_COUNT, birdNN);
     neatGenomeComputeNodePos(birdCurGen, BIRD_COUNT);
 }
@@ -272,9 +272,12 @@ bool init()
 
     timeScale = 1.0f;
 
-    evolParam.compC2 = 2.0;
-    evolParam.compC3 = 3.0;
+    evolParam.compC1 = 3.0;
+    evolParam.compC2 = 3.0;
+    evolParam.compC3 = 2.0;
     evolParam.compT = 1.7;
+    evolParam.mutateAddConn = 0.20;
+    evolParam.mutateAddNode = 0.12;
 
     neatGenomeAlloc(birdCurGen, BIRD_COUNT);
     neatGenomeAlloc(birdNextGen, BIRD_COUNT);
@@ -495,17 +498,33 @@ void ui_generationViewer()
     ImGui::End();
 }
 
-void ui_subPopulations()
+void ui_speciation()
 {
-#if 0
     ImVec4 subPopColors[SUBPOP_MAX_COUNT];
-    for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
+    const i32 speciesCount = neatSpec.speciesCount;
+    for(i32 i = 0; i < speciesCount; ++i) {
         Color3 sc = speciesColor[i];
         subPopColors[i] = ImVec4(sc.r/255.f, sc.g/255.f, sc.b/255.f, 1.f);
     }
 
-    ImGui_SubPopWindow(&geneticEnv, subPopColors);
-#endif
+    i32 maxPopCount = 0;
+    for(i32 i = 0; i < speciesCount; ++i) {
+        maxPopCount = max(neatSpec.speciesPopCount[i], maxPopCount);
+    }
+
+    ImGui::Begin("Speciation");
+
+    for(i32 i = 0; i < speciesCount; ++i) {
+        if(neatSpec.speciesPopCount[i] == 0) continue;
+
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, subPopColors[i]);
+        char buff[64];
+        sprintf(buff, "%d", neatSpec.speciesPopCount[i]);
+        ImGui::ProgressBar(neatSpec.speciesPopCount[i]/(f32)maxPopCount, ImVec2(-1,0), buff);
+        ImGui::PopStyleColor(1);
+    }
+
+    ImGui::End();
 }
 
 void ui_simOptions()
@@ -540,7 +559,7 @@ void doUI()
     ui_simOptions();
     ui_birdViewer();
     ui_generationViewer();
-    ui_subPopulations();
+    ui_speciation();
 }
 
 
@@ -863,7 +882,7 @@ void nextGeneration()
     LOG("#%d maxFitness=%.5f avg=%.5f", generationNumber,
         lastGenStats.maxFitness, lastGenStats.avgFitness);
 
-    neatEvolve(birdCurGen, birdNextGen, birdFitness, BIRD_COUNT, &speciesStagnation, evolParam, true);
+    neatEvolve(birdCurGen, birdNextGen, birdFitness, BIRD_COUNT, &neatSpec, evolParam, true);
     neatGenomeMakeNN(birdCurGen, BIRD_COUNT, birdNN);
     neatGenomeComputeNodePos(birdCurGen, BIRD_COUNT);
 
