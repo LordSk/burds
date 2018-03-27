@@ -87,8 +87,20 @@ project "burds_app"
 	files {
 		"src/*.h",
 		"src/*.cpp",
-		"src/burds/*.h",
-		"src/burds/*.cpp",
+		"src/burds/burds_app.cpp",
+		"src/imgui/*.h",
+		"src/imgui/*.cpp",
+	}
+	
+project "burds_neat"
+	kind "WindowedApp"
+
+	configuration {}
+	
+	files {
+		"src/*.h",
+		"src/*.cpp",
+		"src/burds/burds_neat.cpp",
 		"src/imgui/*.h",
 		"src/imgui/*.cpp",
 	}

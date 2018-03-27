@@ -89,4 +89,10 @@ struct AppWindow
     {
         SDL_GL_SwapWindow(sdlWin);
     }
+
+    inline void cleanup()
+    {
+        free(ims);
+        SDL_DestroyWindow(sdlWin);
+    }
 };

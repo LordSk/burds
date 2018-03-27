@@ -7,6 +7,97 @@
 
 static i32 g_innovationNumber = 0;
 
+// geneCount -> larger genome geneCount
+static f64 compatibilityDistance(const Gene* genes1, const Gene* genes2, i32 geneCount1, i32 geneCount2,
+                                 f64 c1, f64 c2, f64 c3)
+{
+    i32 N = max(geneCount1, geneCount2);
+    //if(N < 20) N = 1;
+
+    // l: largest s: smallest
+    const i32 geneCountL = geneCount1 > geneCount2 ? geneCount1 : geneCount2;
+    const i32 geneCountS = geneCount1 <= geneCount2 ? geneCount1 : geneCount2;
+    const Gene* genesL = geneCount1 > geneCount2 ? genes1 : genes2;
+    const Gene* genesS = geneCount1 <= geneCount2 ? genes1 : genes2;
+
+    i32 maxHistMarkL = 0;
+    i32 maxHistMarkS = 0;
+
+    for(i32 i = 0; i < geneCountL; ++i) {
+        maxHistMarkL = max(maxHistMarkL, genesL[i].historicalMarker);
+    }
+
+    for(i32 i = 0; i < geneCountS; ++i) {
+        maxHistMarkS = max(maxHistMarkS, genesS[i].historicalMarker);
+    }
+
+    const i32 maxCommonHistMark = min(maxHistMarkS, maxHistMarkL);
+
+    i32 disjoint = 0;
+    i32 excess = 0;
+    f64 totalWeightDiff = 0.0;
+    i32 matches = 0;
+
+    u8* resultL = stack_arr(u8,geneCountL);
+    u8* resultS = stack_arr(u8,geneCountS);
+    // DISJOINT by default
+    memset(resultL, 0, geneCountL);
+    memset(resultS, 0, geneCountS);
+
+    enum {
+        DISJOINT=0,
+        MATCHING,
+        EXCESS,
+    };
+
+    // excess
+    for(i32 l = 0; l < geneCountL; ++l) {
+        const i32 innNumL = genesL[l].historicalMarker;
+        if(innNumL > maxCommonHistMark) {
+            resultL[l] = EXCESS;
+        }
+    }
+    for(i32 s = 0; s < geneCountS; ++s) {
+        const i32 innNumS = genesS[s].historicalMarker;
+        if(innNumS > maxCommonHistMark) {
+            resultS[s] = EXCESS;
+        }
+    }
+
+    // matches
+    for(i32 l = 0; l < geneCountL; ++l) {
+        if(resultL[l] != DISJOINT) continue;
+
+        for(i32 s = 0; s < geneCountS; ++s) {
+            if(resultS[s] != DISJOINT) continue;
+
+            if(genesL[l].historicalMarker == genesS[s].historicalMarker) {
+                totalWeightDiff += fabs(genesL[l].weight - genesS[s].weight);
+                matches++;
+                resultL[l] = MATCHING;
+                resultS[s] = MATCHING;
+                break;
+            }
+        }
+    }
+
+    for(i32 l = 0; l < geneCountL; ++l) {
+        if(resultL[l] == DISJOINT) disjoint++;
+        else if(resultL[l] == EXCESS) excess++;
+    }
+
+    for(i32 s = 0; s < geneCountS; ++s) {
+        if(resultS[s] == DISJOINT) disjoint++;
+        else if(resultS[s] == EXCESS) excess++;
+    }
+
+    f64 avgWeightDiff = totalWeightDiff / matches;
+
+    f64 dist = (c1 * disjoint)/N + (c2 * excess)/N + c3 * avgWeightDiff;
+    assert(dist < 100.0);
+    return dist;
+}
+
 void neatGenomeAlloc(Genome** genomes, const i32 count)
 {
     i64 size = sizeof(Genome) * count;
@@ -19,17 +110,18 @@ void neatGenomeAlloc(Genome** genomes, const i32 count)
     LOG("NEAT> allocated %d genomes, size=%lld", count, size);
 }
 
-void neatGenomeDealloc(void* ptr)
+void neatGenomeDealloc(Genome** genomes)
 {
-    free(ptr);
+    free(genomes[0]);
 }
 
-void neatGenomeInit(Genome** genomes, const i32 count, i32 inputCount, i32 outputCount)
+void neatGenomeInit(Genome** genomes, const i32 popCount, i32 inputCount, i32 outputCount,
+                    const NeatEvolutionParams params)
 {
     assert(inputCount > 0);
     assert(outputCount > 0);
 
-    for(i32 i = 0; i < count; ++i) {
+    for(i32 i = 0; i < popCount; ++i) {
         Genome& g = *genomes[i];
         g.inputNodeCount = inputCount;
         g.outputNodeCount = outputCount;
@@ -49,6 +141,45 @@ void neatGenomeInit(Genome** genomes, const i32 count, i32 inputCount, i32 outpu
                 i32 gid = g.geneCount++;
                 g.genes[gid] = { gid, in, (i16)(inputCount + out), randf64(-1.0, 1.0) };
             }
+        }
+    }
+
+    // speciation
+    Gene* speciesRepGenes[NEAT_MAX_SPECIES] = {0};
+    i32 speciesRepGeneCount[NEAT_MAX_SPECIES];
+    i32 speciesPopCount[NEAT_MAX_SPECIES] = {0};
+    i32 speciesCount = 0;
+    f64 biggestDist = 0.0;
+
+    const f64 c1 = params.compC1;
+    const f64 c2 = params.compC2;
+    const f64 c3 = params.compC3;
+    const f64 compatibilityThreshold = params.compT;
+
+    for(i32 i = 0; i < popCount; ++i) {
+        Genome& g = *genomes[i];
+
+        bool found = false;
+        for(i32 s = 0; s < speciesCount; ++s) {
+            if(!speciesRepGenes[s]) continue;
+
+            f64 dist = compatibilityDistance(g.genes, speciesRepGenes[s], g.geneCount,
+                                             speciesRepGeneCount[s], c1, c2, c3);
+            biggestDist = max(dist, biggestDist);
+            if(dist < compatibilityThreshold) {
+                g.species = s;
+                speciesPopCount[s]++;
+                found = true;
+                break;
+            }
+        }
+
+        if(!found) {
+            assert(speciesCount < NEAT_MAX_SPECIES);
+            i32 sid = speciesCount++;
+            speciesRepGenes[sid] = g.genes;
+            speciesRepGeneCount[sid] = g.geneCount;
+            speciesPopCount[sid] = 1;
         }
     }
 }
@@ -252,9 +383,9 @@ void neatNnPropagate(NeatNN** nn, const i32 nnCount)
     }
 }
 
-void neatNnDealloc(void* ptr)
+void neatNnDealloc(NeatNN** nn)
 {
-    free(ptr);
+    free(nn[0]);
 }
 
 struct FitnessPair
@@ -337,97 +468,6 @@ static i32 newInnovationNumber(i16 nodeIn, i16 nodeOut, const i32* nodeOrignMark
     g_posPool[pid] = { nodeIn, nodeOut, nodeInMarker, nodeOutMarker };
     g_innNumPool[pid] = innovationNumber;
     return innovationNumber;
-}
-
-// geneCount -> larger genome geneCount
-static f64 compatibilityDistance(const Gene* genes1, const Gene* genes2, i32 geneCount1, i32 geneCount2,
-                                 f64 c1, f64 c2, f64 c3)
-{
-    i32 N = max(geneCount1, geneCount2);
-    //if(N < 20) N = 1;
-
-    // l: largest s: smallest
-    const i32 geneCountL = geneCount1 > geneCount2 ? geneCount1 : geneCount2;
-    const i32 geneCountS = geneCount1 <= geneCount2 ? geneCount1 : geneCount2;
-    const Gene* genesL = geneCount1 > geneCount2 ? genes1 : genes2;
-    const Gene* genesS = geneCount1 <= geneCount2 ? genes1 : genes2;
-
-    i32 maxHistMarkL = 0;
-    i32 maxHistMarkS = 0;
-
-    for(i32 i = 0; i < geneCountL; ++i) {
-        maxHistMarkL = max(maxHistMarkL, genesL[i].historicalMarker);
-    }
-
-    for(i32 i = 0; i < geneCountS; ++i) {
-        maxHistMarkS = max(maxHistMarkS, genesS[i].historicalMarker);
-    }
-
-    const i32 maxCommonHistMark = min(maxHistMarkS, maxHistMarkL);
-
-    i32 disjoint = 0;
-    i32 excess = 0;
-    f64 totalWeightDiff = 0.0;
-    i32 matches = 0;
-
-    u8* resultL = stack_arr(u8,geneCountL);
-    u8* resultS = stack_arr(u8,geneCountS);
-    // DISJOINT by default
-    memset(resultL, 0, geneCountL);
-    memset(resultS, 0, geneCountS);
-
-    enum {
-        DISJOINT=0,
-        MATCHING,
-        EXCESS,
-    };
-
-    // excess
-    for(i32 l = 0; l < geneCountL; ++l) {
-        const i32 innNumL = genesL[l].historicalMarker;
-        if(innNumL > maxCommonHistMark) {
-            resultL[l] = EXCESS;
-        }
-    }
-    for(i32 s = 0; s < geneCountS; ++s) {
-        const i32 innNumS = genesS[s].historicalMarker;
-        if(innNumS > maxCommonHistMark) {
-            resultS[s] = EXCESS;
-        }
-    }
-
-    // matches
-    for(i32 l = 0; l < geneCountL; ++l) {
-        if(resultL[l] != DISJOINT) continue;
-
-        for(i32 s = 0; s < geneCountS; ++s) {
-            if(resultS[s] != DISJOINT) continue;
-
-            if(genesL[l].historicalMarker == genesS[s].historicalMarker) {
-                totalWeightDiff += fabs(genesL[l].weight - genesS[s].weight);
-                matches++;
-                resultL[l] = MATCHING;
-                resultS[s] = MATCHING;
-                break;
-            }
-        }
-    }
-
-    for(i32 l = 0; l < geneCountL; ++l) {
-        if(resultL[l] == DISJOINT) disjoint++;
-        else if(resultL[l] == EXCESS) excess++;
-    }
-
-    for(i32 s = 0; s < geneCountS; ++s) {
-        if(resultS[s] == DISJOINT) disjoint++;
-        else if(resultS[s] == EXCESS) excess++;
-    }
-
-    f64 avgWeightDiff = totalWeightDiff / matches;
-
-    f64 dist = (c1 * disjoint)/N + (c2 * excess)/N + c3 * avgWeightDiff;
-    assert(dist < 100.0);
-    return dist;
 }
 
 static i32 compareGenesAsc(const void* a, const void* b)
@@ -547,11 +587,20 @@ static void crossover(Genome* dest, const Genome* parentA, const Genome* parentB
     const i32 geneCountOut2 = geneCountOut;
 
     for(i32 i = 0; i < geneCountOut2; ++i) {
+        const i16 nodeIn = genesOut[i].nodeIn;
         const i16 nodeOut = genesOut[i].nodeOut;
+        if(nodeIn >= dest->totalNodeCount) {
+            dest->totalNodeCount = nodeIn+1;
+        }
         if(nodeOut >= dest->totalNodeCount) {
             dest->totalNodeCount = nodeOut+1;
         }
     }
+}
+
+void neatGenomeSpeciation(Genome** genomes, const i32 popCount, i32* speciesPopCount)
+{
+
 }
 
 void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 popCount,
@@ -564,67 +613,24 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
 
     timept t0 = timeGet();
 
-    // speciation
-    Gene* speciesRepGenes[NEAT_MAX_SPECIES] = {0};
-    i32 speciesRepGeneCount[NEAT_MAX_SPECIES];
-    i32 speciesPopCount[NEAT_MAX_SPECIES] = {0};
     f64 speciesMaxFitness[NEAT_MAX_SPECIES] = {0};
+    i32 speciesPopCount[NEAT_MAX_SPECIES] = {0};
     i32 speciesCount = 0;
-    f64 biggestDist = 0.0;
-
-    const f64 c1 = params.compC1;
-    const f64 c2 = params.compC2;
-    const f64 c3 = params.compC3;
-    const f64 compatibilityThreshold = params.compT;
 
     for(i32 i = 0; i < popCount; ++i) {
-        Genome& g = *genomes[i];
-
-        bool found = false;
-        for(i32 s = 0; s < speciesCount; ++s) {
-            if(!speciesRepGenes[s]) continue;
-
-            f64 dist = compatibilityDistance(g.genes, speciesRepGenes[s], g.geneCount,
-                                             speciesRepGeneCount[s], c1, c2, c3);
-            biggestDist = max(dist, biggestDist);
-            if(dist < compatibilityThreshold) {
-                g.species = s;
-                speciesPopCount[s]++;
-                found = true;
-                break;
-            }
-        }
-
-        if(!found) {
-            assert(speciesCount < NEAT_MAX_SPECIES);
-            i32 sid = -1;
-            if(g.species != -1 && speciesPopCount[g.species] == 0) {
-                sid = g.species; // set same species as before
-            }
-            else {
-                for(i32 s = 0; s < NEAT_MAX_SPECIES; ++s) {
-                    if(speciesPopCount[s] == 0) {
-                        sid = s;
-                        break;
-                    }
-                }
-                g.species = sid;
-            }
-            speciesCount = max(speciesCount, sid+1);
-
-            speciesRepGenes[sid] = g.genes;
-            speciesRepGeneCount[sid] = g.geneCount;
-            speciesPopCount[sid] = 1;
-        }
+        const i32 s = genomes[i]->species;
+        assert(s >= 0 && s < NEAT_MAX_SPECIES);
+        speciesCount = max(speciesCount, s+1);
+        speciesPopCount[s]++;
     }
 
     for(i32 i = 0; i < popCount; ++i) {
         const i32 s = genomes[i]->species;
-        assert(s >=0 && s < speciesCount);
         speciesMaxFitness[s] = max(fitness[i], speciesMaxFitness[s]);
     }
 
     u8* deleteSpecies = stack_arr(u8,speciesCount);
+#if 0
     constexpr i32 stagnationT = 15;
     for(i32 s = 0; s < speciesCount; ++s) {
         deleteSpecies[s] = false;
@@ -642,6 +648,7 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
             speciesStagn->stagnation[s] = 0;
         }
     }
+#endif
 
 #if 1
     FitnessPair* fpair = stack_arr(FitnessPair,popCount);
@@ -686,11 +693,12 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
     }
 
     if(parentCount == 0) {
-        if(verbose) LOG("NEAT> all species stagnated");
+        assert(0);
+        /*if(verbose) LOG("NEAT> all species stagnated");
         Genome* g = genomes[0];
         neatGenomeInit(genomes, popCount, g->inputNodeCount, g->outputNodeCount);
         *speciesStagn = {};
-        return;
+        return;*/
     }
 
 #ifdef CONF_DEBUG
@@ -700,8 +708,6 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
     for(i32 i = 0; i < parentCount; ++i) {
         memmove(genomes[i], nextGenomes[i], sizeof(Genome));
     }
-
-    if(verbose) LOG("NEAT> species count: %d (biggestDist=%g)", speciesCount, biggestDist);
 
     // fitness sharing
     f64* normFitness = stack_arr(f64,parentCount);
@@ -867,6 +873,61 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
 
     memmove(genomes[0], nextGenomes[0], sizeof(Genome) * popCount);
 
+    // speciation
+    Gene* speciesRepGenes[NEAT_MAX_SPECIES] = {0};
+    i32 speciesRepGeneCount[NEAT_MAX_SPECIES];
+    mem_zero(speciesPopCount);
+    speciesCount = 0;
+    f64 biggestDist = 0.0;
+
+    const f64 c1 = params.compC1;
+    const f64 c2 = params.compC2;
+    const f64 c3 = params.compC3;
+    const f64 compatibilityThreshold = params.compT;
+
+    for(i32 i = 0; i < popCount; ++i) {
+        Genome& g = *genomes[i];
+
+        bool found = false;
+        for(i32 s = 0; s < speciesCount; ++s) {
+            if(!speciesRepGenes[s]) continue;
+
+            f64 dist = compatibilityDistance(g.genes, speciesRepGenes[s], g.geneCount,
+                                             speciesRepGeneCount[s], c1, c2, c3);
+            biggestDist = max(dist, biggestDist);
+            if(dist < compatibilityThreshold) {
+                g.species = s;
+                speciesPopCount[s]++;
+                found = true;
+                break;
+            }
+        }
+
+        if(!found) {
+            assert(speciesCount < NEAT_MAX_SPECIES);
+            i32 sid = -1;
+            if(g.species != -1 && speciesPopCount[g.species] == 0) {
+                sid = g.species; // set same species as before
+            }
+            else {
+                for(i32 s = 0; s < NEAT_MAX_SPECIES; ++s) {
+                    if(speciesPopCount[s] == 0) {
+                        sid = s;
+                        break;
+                    }
+                }
+                g.species = sid;
+            }
+            speciesCount = max(speciesCount, sid+1);
+
+            speciesRepGenes[sid] = g.genes;
+            speciesRepGeneCount[sid] = g.geneCount;
+            speciesPopCount[sid] = 1;
+        }
+    }
+
+    if(verbose) LOG("NEAT> species count: %d (biggestDist=%g)", speciesCount, biggestDist);
+
     if(verbose) LOG("NEAT> evolution took %.3fs", timeToMicrosec(timeGet() - t0)/1000000.0);
 }
 
@@ -1028,9 +1089,10 @@ void neatTestPropagate()
 
     f64 output = tanh(weightO * hiddenVal);
 
+    NeatEvolutionParams params;
     Genome* g;
     neatGenomeAlloc(&g, 1);
-    neatGenomeInit(&g, 1, 2, 1);
+    neatGenomeInit(&g, 1, 2, 1, params);
 
 
 }

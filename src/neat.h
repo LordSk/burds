@@ -75,13 +75,16 @@ struct NeatSpeciesStagnation
 };
 
 void neatGenomeAlloc(Genome** genomes, const i32 count);
-void neatGenomeDealloc(void* ptr);
+void neatGenomeDealloc(Genome** genomes);
 
-void neatGenomeInit(Genome** genomes, const i32 count, i32 inputCount, i32 outputCount);
+void neatGenomeInit(Genome** genomes, const i32 popCount, i32 inputCount, i32 outputCount,
+                    const NeatEvolutionParams params);
 void neatGenomeMakeNN(Genome** genomes, const i32 count, NeatNN** nn, bool verbose = false);
 void neatGenomeComputeNodePos(Genome** genomes, const i32 popCount);
+void neatGenomeSpeciation(Genome** genomes, const i32 popCount);
+
 void neatNnPropagate(NeatNN** nn, const i32 nnCount);
-void neatNnDealloc(void* ptr);
+void neatNnDealloc(NeatNN** nn);
 
 void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 popCount,
                 NeatSpeciesStagnation* speciesStagn, const NeatEvolutionParams& params,

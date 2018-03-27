@@ -944,13 +944,6 @@ void testWideTanh()
     }
 }
 
-void generateSpeciesTags(u8* tags, const i32 tagCount, const i32 bitCount)
-{
-    for(i32 i = 0; i < tagCount; ++i) {
-        tags[i] = randi64(0, (1 << bitCount)-1);
-    }
-}
-
 void evolutionSSS1(GeneticEnvRnn* env)
 {
     assert(env->speciesBits <= 8);
