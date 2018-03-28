@@ -30,6 +30,7 @@ typedef double f64;
 #define TAU (6.28318530718)
 
 #define I32_MAX 0x7fffffff
+#define U32_MAX 0xffffffff
 #define U64_MAX 0xffffffffffffffff
 
 #ifndef max
@@ -82,10 +83,10 @@ inline T clamp(T val, T vmin, T vmax)
     return val;
 }
 
-inline f64 randf64(f64 min, f64 max)
+inline f64 randf64(f64 vmin, f64 vmax)
 {
     u64 r = xorshift64star();
-    return min + ((f64)r/U64_MAX) * (max - min);
+    return vmin + ((f64)r/(f64)U64_MAX) * (vmax - vmin);
 }
 
 

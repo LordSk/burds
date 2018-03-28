@@ -5,6 +5,9 @@
 #include <math.h>
 #include <malloc.h>
 
+#define activation(x) tanh(x)
+//#define activation(x) (1.0/(1.0+exp(-4.9*x)) + 0.5)
+
 NeatSpeciation::~NeatSpeciation()
 {
     if(speciesRep) {
@@ -385,12 +388,12 @@ void neatNnPropagate(NeatNN** nn, const i32 nnCount)
                 value += comp.weight * nodeValues[comp.nodeIn];
             }
             else {
-                nodeValues[curNoteOut] = tanh(clamp(value, -10.0, 10.0));
+                nodeValues[curNoteOut] = activation(clamp(value, -10.0, 10.0));
                 curNoteOut = comp.nodeOut;
                 value = comp.weight * nodeValues[comp.nodeIn] + 1.0; // +bias
             }
         }
-        nodeValues[curNoteOut] = tanh(clamp(value, -10.0, 10.0));
+        nodeValues[curNoteOut] = activation(clamp(value, -10.0, 10.0));
     }
 }
 
@@ -498,9 +501,11 @@ static i32 selectRoulette(const i32 count, f64* fitness, f64 totalFitness)
     for(i32 j = 0; j < count; ++j) {
         s += fitness[j];
         if(r < s) {
+            LOG("total=%g s=%g r=%g j=%d", totalFitness, s, r, j);
             return j;
         }
     }
+
     assert(0);
     return 0;
 }
@@ -512,13 +517,13 @@ static void crossover(Genome* dest, const Genome* parentA, const Genome* parentB
     // NOTE: parentA is the most fit
     const i32 geneCountA = parentA->geneCount;
     const i32 geneCountB = parentB->geneCount;
-    i32& geneCountOut = dest->geneCount;
-    geneCountOut = 0;
     const Gene* genesA = parentA->genes;
     const Gene* genesB = parentB->genes;
-    Gene* genesOut = dest->genes;
     const u8* geneDisabledA = parentA->geneDisabled;
     const u8* geneDisabledB = parentB->geneDisabled;
+    i32& geneCountOut = dest->geneCount;
+    geneCountOut = 0;
+    Gene* genesOut = dest->genes;
     u8* geneDisabledOut = dest->geneDisabled;
     mem_zero(dest->geneDisabled);
 
@@ -542,6 +547,7 @@ static void crossover(Genome* dest, const Genome* parentA, const Genome* parentB
     };
 
     u8 resultA[NEAT_MAX_GENES] = {0};
+    u8 resultB[NEAT_MAX_GENES] = {0};
 
     // compare A to B
     for(i32 a = 0; a < geneCountA; ++a) {
@@ -552,15 +558,18 @@ static void crossover(Genome* dest, const Genome* parentA, const Genome* parentB
         }
 
         for(i32 b = 0; b < geneCountB; ++b) {
+            if(resultB[b] != DISJOINT) continue;
+
             const i32 innNumS = genesB[b].historicalMarker;
             if(innNumS > maxCommonHistMark) {
-                // EXCESS
+                resultB[b] = EXCESS;
                 continue;
             }
 
             // matching
             if(innNumL == genesB[b].historicalMarker) {
                 resultA[a] = MATCHING;
+                resultB[b] = MATCHING;
 
                 // choose at random one or the other
                 const i32 gid = geneCountOut++;
@@ -585,14 +594,35 @@ static void crossover(Genome* dest, const Genome* parentA, const Genome* parentB
             geneDisabledOut[gid] = randf64(0.0, 1.0) < geneStayDisabledChance ? geneDisabledA[a] : 0;
         }
     }
+    // still inherit not common disjoint from less fit parent
+    for(i32 b = 0; b < geneCountB; ++b) {
+        if(resultB[b] == DISJOINT || resultB[b] == EXCESS) {
+            const i32 markB = genesB[b].historicalMarker;
+
+            bool found = false;
+            for(i32 c = 0; c < geneCountOut; c++) {
+                const i32 markC = genesOut[c].historicalMarker;
+                if(markC == markB) {
+                    found = true;
+                    break;
+                }
+            }
+
+            if(!found) {
+                const i32 gid = geneCountOut++;
+                genesOut[gid] = genesB[b];
+                geneDisabledOut[gid] = randf64(0.0, 1.0) < geneStayDisabledChance ? geneDisabledB[b] : 0;
+            }
+        }
+    }
 
     // reconstruct metadata
     const i32 inputCount = parentA->inputNodeCount;
     const i32 outputCount = parentA->outputNodeCount;
     dest->inputNodeCount = inputCount;
     dest->outputNodeCount = outputCount;
-    dest->totalNodeCount = inputCount + outputCount;
     dest->species = parentA->species;
+    dest->totalNodeCount = inputCount + outputCount;
     mem_zero(dest->nodePos);
 
     const i32 geneCountOut2 = geneCountOut;
@@ -660,7 +690,6 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
 
 #if 1
     FitnessPair* fpair = stack_arr(FitnessPair,popCount);
-
     for(i32 i = 0; i < popCount; ++i) {
         fpair[i] = { i, genomes[i]->species, fitness[i] };
     }
@@ -676,27 +705,28 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
     f64* parentFitness = stack_arr(f64,popCount);
     i32 parentCount = 0;
     i32 curSpecies = genomes[fpair[0].id]->species;
-    i32 curSpeciesMemberCount = 0;
+    i32 curSpeciesPopCount = 0;
 
     for(i32 i = 0; i < popCount; ++i) {
         Genome* g = genomes[fpair[i].id];
+        const f64 fit = fpair[i].fitness;
         const i32 spec = g->species;
         if(deleteSpecies[spec]) continue; // do not copy over stagnating species
 
         if(spec == curSpecies) {
-            if(curSpeciesMemberCount < speciesPopCountHalf[spec]) {
-                curSpeciesMemberCount++;
+            if(curSpeciesPopCount < speciesPopCountHalf[spec]) {
+                curSpeciesPopCount++;
                 i32 pid = parentCount++;
                 memmove(nextGenomes[pid], g, sizeof(Genome));
-                parentFitness[pid] = fpair[i].fitness;
+                parentFitness[pid] = fit;
             }
         }
         else {
             curSpecies = spec;
-            curSpeciesMemberCount = 1;
+            curSpeciesPopCount = 1;
             i32 pid = parentCount++;
             memmove(nextGenomes[pid], g, sizeof(Genome));
-            parentFitness[pid] = fpair[i].fitness;
+            parentFitness[pid] = fit;
         }
     }
 
@@ -713,8 +743,19 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
     memset(genomes[0], 0xAB, sizeof(Genome) * popCount);
 #endif
 
+    memmove(genomes[0], nextGenomes[0], sizeof(Genome) * parentCount);
+
+    // copy champion of each species unchanged
+    // TODO: copy at the end
+    i32 championCount = 0;
+    i32 champCheckSpec = -1;
     for(i32 i = 0; i < parentCount; ++i) {
-        memmove(genomes[i], nextGenomes[i], sizeof(Genome));
+        Genome* g = genomes[i];
+        const i32 spec = g->species;
+        if(spec != champCheckSpec && speciesPopCount[spec] > 4) {
+            memmove(nextGenomes[championCount++], g, sizeof(Genome));
+            champCheckSpec = spec;
+        }
     }
 
     // fitness sharing
@@ -730,7 +771,7 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
     Genome** potentialMates = stack_arr(Genome*,parentCount);
     f64* pmFitness = stack_arr(f64,parentCount);
 
-    for(i32 i = 0; i < popCount; ++i) {
+    for(i32 i = championCount; i < popCount; ++i) {
         //const i32 idA = randi64(0, parentCount-1);
         const i32 idA = selectRoulette(parentCount, normFitness, totalNormFitness);
         const Genome* mateA = genomes[idA];
@@ -757,7 +798,7 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
         }
         else {
             const i32 idB = selectRoulette(potentialMatesCount, pmFitness, pmTotalFitness);
-            const Genome* mateB = genomes[idB];
+            const Genome* mateB = potentialMates[idB];
 
             // parentA is the most fit
             const Genome* parentA = mateA;
@@ -787,7 +828,7 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
     i32 newConnectionMutationCount = 0;
     i32 newNodeMutationCount = 0;
 
-    for(i32 i = 0; i < popCount; ++i) {
+    for(i32 i = championCount; i < popCount; ++i) {
         Genome& g = *nextGenomes[i];
         //Genome& g = *genomes[i];
 

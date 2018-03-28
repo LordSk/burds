@@ -7,6 +7,7 @@
 #include <assert.h>
 
 #include "neat.h"
+#include "neat_imgui.h"
 #include "window.h"
 
 #define XOR_COUNT 1024
@@ -16,12 +17,12 @@ struct App {
 
 AppWindow window;
 
-Genome* xorCurgen[XOR_COUNT];
+Genome* xorCurGen[XOR_COUNT];
 Genome* xorNextGen[XOR_COUNT];
 NeatNN* xorNN[XOR_COUNT];
 f64 xorFitness[XOR_COUNT];
 NeatEvolutionParams evolParam;
-NeatSpeciation speciesStagnation;
+NeatSpeciation neatSpec;
 
 struct GenerationStats {
     i32 number = 0;
@@ -54,13 +55,13 @@ bool init()
         return false;
     }
 
-    neatGenomeAlloc(xorCurgen, XOR_COUNT);
+    neatGenomeAlloc(xorCurGen, XOR_COUNT);
     neatGenomeAlloc(xorNextGen, XOR_COUNT);
     resetSimulation();
 
-    evolParam.compC2 = 2.0;
+    /*evolParam.compC2 = 2.0;
     evolParam.compC3 = 3.0;
-    evolParam.compT = 1.0;
+    evolParam.compT = 1.0;*/
     //evolParam.mutateAddNode = 0.01;
 
 #if 0
@@ -93,8 +94,8 @@ bool init()
 
 void cleanup()
 {
-    neatGenomeDealloc(xorCurgen[0]);
-    neatGenomeDealloc(xorNextGen[0]);
+    neatGenomeDealloc(xorCurGen);
+    neatGenomeDealloc(xorNextGen);
 }
 
 void run()
@@ -147,9 +148,10 @@ void resetSimulation()
     lastGenStats = {};
     memset(pastGenStats, 0, sizeof(pastGenStats));
 
-    speciesStagnation = {};
-    neatGenomeInit(xorCurgen, XOR_COUNT, 2, 1);
-    neatGenomeMakeNN(xorCurgen, XOR_COUNT, xorNN);
+    neatSpec = {};
+    neatGenomeInit(xorCurGen, XOR_COUNT, 2, 1, evolParam, &neatSpec);
+    neatGenomeMakeNN(xorCurGen, XOR_COUNT, xorNN);
+    neatGenomeComputeNodePos(xorCurGen, XOR_COUNT);
 }
 
 void nextGeneration()
@@ -180,7 +182,7 @@ void nextGeneration()
     f64 input[4][2] = { {0, 0}, {1, 0}, {0, 1}, {1, 1} };
     i32 expected[4] = { 0, 1, 1, 0};
 
-    const i32 inputCount = xorCurgen[0]->inputNodeCount;
+    const i32 inputCount = xorCurGen[0]->inputNodeCount;
 
     for(i32 t = 0; t < 4; t++) {
         for(i32 i = 0; i < XOR_COUNT; i++) {
@@ -218,7 +220,7 @@ void nextGeneration()
     for(i32 i = 0; i < XOR_COUNT; i++) {
         totalFitness += xorFitness[i];
         maxFitness = max(maxFitness, xorFitness[i]);
-        totalNodeCount += xorCurgen[i]->totalNodeCount;
+        totalNodeCount += xorCurGen[i]->totalNodeCount;
     }
 
     curGenStats.avgFitness = totalFitness / XOR_COUNT;
@@ -240,9 +242,9 @@ void nextGeneration()
     }
 
     LOG("evolution %d ----------", generationNumber);
-    neatEvolve(xorCurgen, xorNextGen, xorFitness, XOR_COUNT, &speciesStagnation, evolParam, true);
-    neatGenomeMakeNN(xorCurgen, XOR_COUNT, xorNN);
-    neatGenomeComputeNodePos(xorCurgen, XOR_COUNT);
+    neatEvolve(xorCurGen, xorNextGen, xorFitness, XOR_COUNT, &neatSpec, evolParam, true);
+    neatGenomeMakeNN(xorCurGen, XOR_COUNT, xorNN);
+    neatGenomeComputeNodePos(xorCurGen, XOR_COUNT);
 }
 
 void ui_xorViewer()
@@ -269,10 +271,10 @@ void ui_xorViewer()
         ImGui::PopItemWidth();
 
         if(ImGui::Button("Next of same species")) {
-            const i32 species = xorCurgen[dbgViewerId]->species;
+            const i32 species = xorCurGen[dbgViewerId]->species;
             for(i32 i = 1; i < XOR_COUNT; ++i) {
                 i32 id = (dbgViewerId + i) % XOR_COUNT;
-                if(xorCurgen[id]->species == species) {
+                if(xorCurGen[id]->species == species) {
                     dbgViewerId = id;
                     break;
                 }
@@ -283,16 +285,16 @@ void ui_xorViewer()
     ImGui::Separator();
 
     ImGui::Text("XOR_%d", dbgViewerId);
-    ImGui::TextColored(ImVec4(1, 0, 1, 1), "Species: %X", xorCurgen[dbgViewerId]->species);
+    ImGui::TextColored(ImVec4(1, 0, 1, 1), "Species: %X", xorCurGen[dbgViewerId]->species);
     ImGui::TextColored(ImVec4(0, 1, 0, 1), "Fitness: %g", xorFitness[dbgViewerId]);
 
     ImGui::Separator();
 
-    ImGui_GeneList(xorCurgen[dbgViewerId]);
+    ImGui_NeatGeneList(xorCurGen[dbgViewerId]);
 
     ImGui::Separator();
 
-    ImGui_NeatNN(xorCurgen[dbgViewerId]);
+    ImGui_NeatNN(xorCurGen[dbgViewerId]);
 
     if(ImGui::CollapsingHeader("Propgate")) {
         static i32 input1 = 0;
@@ -323,17 +325,17 @@ void ui_xorViewer()
         ImGui::PopItemWidth();
 
         if(ImGui::Button("Reproduce")) {
-            neatTestTryReproduce(*xorCurgen[versusId1], *xorCurgen[versusId2]);
+            neatTestTryReproduce(*xorCurGen[versusId1], *xorCurGen[versusId2]);
         }
 
         ImGui::SameLine();
 
         if(ImGui::Button("Crossover")) {
-            neatTestCrossover(xorCurgen[versusId1], xorCurgen[versusId2], xorCurgen[outId]);
+            neatTestCrossover(xorCurGen[versusId1], xorCurGen[versusId2], xorCurGen[outId]);
         }
 
-        ImGui_GeneList(xorCurgen[outId]);
-        ImGui_NeatNN(xorCurgen[outId]);
+        ImGui_NeatGeneList(xorCurGen[outId]);
+        ImGui_NeatNN(xorCurGen[outId]);
     }
 
     if(ImGui::CollapsingHeader("Compatibility")) {
@@ -343,7 +345,7 @@ void ui_xorViewer()
         ImGui::PopItemWidth();
 
         ImGui::TextColored(ImVec4(0, 1, 1, 1), "Compatibility: %g",
-                           neatTestCompability(xorCurgen[versusId1], xorCurgen[versusId2], evolParam));
+                           neatTestCompability(xorCurGen[versusId1], xorCurGen[versusId2], evolParam));
     }
 
     ImGui::End();

@@ -107,6 +107,7 @@ NeatSpeciation neatSpec;
 
 i32 birdAppleEatenCount[BIRD_COUNT];
 f32 birdDistToNextApple[BIRD_COUNT];
+f32 birdShortestDistToNextApple[BIRD_COUNT];
 
 f64 birdFitnessAcc[BIRD_COUNT];
 f64 birdFitness[BIRD_COUNT];
@@ -194,6 +195,10 @@ void resetBirds()
     mem_zero(birdFitnessAcc);
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        birdShortestDistToNextApple[i] = 99999999.9;
+    }
+
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
         appleTf[i].size.x = 80;
         appleTf[i].size.y = 80;
         appleTf[i].center.x = 40;
@@ -264,20 +269,21 @@ bool init()
 
     tex_birdBody = loadTexture("../bird_body.png");
     tex_birdWing = loadTexture("../wing.png");
-    tex_apple = loadTexture("../apple.png");
-    if(tex_birdBody == -1 || tex_birdWing == -1 ||
-       tex_apple == -1) {
+    tex_apple    = loadTexture("../apple.png");
+    if(tex_birdBody == -1 ||
+       tex_birdWing == -1 ||
+       tex_apple    == -1) {
         return false;
     }
 
     timeScale = 1.0f;
 
-    evolParam.compC1 = 3.0;
-    evolParam.compC2 = 3.0;
-    evolParam.compC3 = 2.0;
-    evolParam.compT = 1.7;
-    evolParam.mutateAddConn = 0.20;
-    evolParam.mutateAddNode = 0.12;
+    evolParam.compC1 = 2.0;
+    evolParam.compC2 = 2.0;
+    evolParam.compC3 = 3.0;
+    evolParam.compT = 1.5;
+    evolParam.mutateAddConn = 0.05;
+    evolParam.mutateAddNode = 0.1;
 
     neatGenomeAlloc(birdCurGen, BIRD_COUNT);
     neatGenomeAlloc(birdNextGen, BIRD_COUNT);
@@ -443,7 +449,7 @@ void ui_birdViewer()
 
     ImGui::Separator();
 
-    ImGui::TextUnformatted("Input");
+    ImGui::TextUnformatted("Output");
     f32 left = birdInput[dbgViewerBirdId].left;
     f32 right = birdInput[dbgViewerBirdId].right;
     ImGui_ColoredRect(ImVec2(20,20), ImVec4(left, right, 0, 1));
@@ -518,9 +524,13 @@ void ui_speciation()
         if(neatSpec.speciesPopCount[i] == 0) continue;
 
         ImGui::PushStyleColor(ImGuiCol_PlotHistogram, subPopColors[i]);
+
         char buff[64];
         sprintf(buff, "%d", neatSpec.speciesPopCount[i]);
-        ImGui::ProgressBar(neatSpec.speciesPopCount[i]/(f32)maxPopCount, ImVec2(-1,0), buff);
+        ImGui::ProgressBar(neatSpec.speciesPopCount[i]/(f32)maxPopCount, ImVec2(100,0), buff);
+        ImGui::SameLine();
+        ImGui::TextColored(subPopColors[i], "%g", neatSpec.maxFitness[i]);
+
         ImGui::PopStyleColor(1);
     }
 
@@ -574,7 +584,8 @@ void updateNNs()
     }
 
     // setup neural net inputs
-    for(i32 i = 0; i < aliveCount; ++i) {
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        if(birdDead[i]) continue;
         Vec2 applePos = applePosList[birdApplePositionId[i]];
         f64 appleOffsetX = applePos.x - birdPos[i].x;
         f64 appleOffsetY = applePos.y - birdPos[i].y;
@@ -588,13 +599,13 @@ void updateNNs()
         f32 diffRot = vec2AngleBetween(&dir, &diff);
 
         f64 inputs[4] = {
-            diffRot / PI,
             velX / 1000.0,
             velY / 1000.0,
+            diffRot / PI,
             vec2Len(&diff) / 3000.0
         };
 
-        aliveNN[i]->setInputs(inputs, 4);
+        birdNN[i]->setInputs(inputs, 4);
     }
 
     neatNnPropagate(aliveNN, aliveCount);
@@ -602,15 +613,27 @@ void updateNNs()
     // get neural net output
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         if(birdDead[i]) continue;
-        f64* output = &birdNN[i]->nodeValues[4];
-        birdInput[i].left = output[0] > 0.5;
-        birdInput[i].right = output[1] > 0.5;
+        f64 out[4];
+        memmove(out, &birdNN[i]->nodeValues[4], sizeof(out));
 
-        birdInput[i].flapLight = output[2] > 0.33 && output[2] <= 0.66;
-        birdInput[i].flapHard = output[2] > 0.66;
+        out[0] = (out[0] + 1.0) * 0.5;
+        out[1] = (out[1] + 1.0) * 0.5;
+        out[2] = (out[2] + 1.0) * 0.5;
+        out[3] = (out[3] + 1.0) * 0.5;
 
-        birdInput[i].brakeLight = output[3] > 0.33 && output[3] <= 0.66;
-        birdInput[i].brakeHard = output[3] > 0.66;
+        assert(out[0] >= 0 && out[0] <= 1.0);
+        assert(out[1] >= 0 && out[1] <= 1.0);
+        assert(out[2] >= 0 && out[2] <= 1.0);
+        assert(out[3] >= 0 && out[3] <= 1.0);
+
+        birdInput[i].left = out[0] > 0.5;
+        birdInput[i].right = out[1] > 0.5;
+
+        birdInput[i].flapLight = out[2] > 0.33 && out[2] <= 0.66;
+        birdInput[i].flapHard = out[2] > 0.66;
+
+        birdInput[i].brakeLight = out[3] > 0.33 && out[3] <= 0.66;
+        birdInput[i].brakeHard = out[3] > 0.66;
     }
 }
 
@@ -636,7 +659,14 @@ void updateMechanics()
             birdApplePositionId[i]++;
             birdAppleEatenCount[i]++;
             birdHealth[i] = HEALTH_MAX;
+            birdShortestDistToNextApple[i] = vec2Distance(&applePosList[birdApplePositionId[i]],
+                    &birdPos[i]);
         }
+    }
+
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        f32 dist = vec2Distance(&applePosList[birdApplePositionId[i]], &birdPos[i]);
+        birdShortestDistToNextApple[i] = min(birdShortestDistToNextApple[i], dist);
     }
 
     f32 birdDistToNextAppleOld[BIRD_COUNT];
@@ -660,28 +690,21 @@ void updateMechanics()
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         if(birdDead[i]) continue;
         f64 applesFactor = birdAppleEatenCount[i];
+        f64 shortDistFactor = APPLE_RADIUS / min(birdShortestDistToNextApple[i], 5000); // 0.0 -> 1.0
         f64 distFactor = APPLE_RADIUS / min(vec2Distance(&birdPos[i], &appleTf[i].pos), 5000); // 0.0 -> 1.0
 
-        birdFitnessAcc[i] += distFactor;
+        birdFitnessAcc[i] += (distFactor * distFactor) * shortDistFactor;
         birdFitness[i] = birdFitnessAcc[i] * (applesFactor + 1.0);
     }
 #else
-
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         if(birdDead[i]) continue;
 
-        birdFitness[i] += birdAppleEatenCount[i];
-
         if(birdDistToNextAppleOld[i] > birdDistToNextApple[i]) {
-           birdFitness[i] += (birdDistToNextAppleOld[i] - birdDistToNextApple[i]) / 1000.0;
-        }
-        else {
-            birdFitness[i] -= fabs(birdDistToNextAppleOld[i] - birdDistToNextApple[i]) / 2000.0;
+           birdFitnessAcc[i] += (birdDistToNextAppleOld[i] - birdDistToNextApple[i]) / 1000.0;
         }
 
-        if(birdFitness[i] < 0) {
-            birdFitness[i] = 0.0;
-        }
+        birdFitness[i] = 0.001 + birdFitnessAcc[i] * (birdAppleEatenCount[i] + 1.0);
     }
 #endif
 
@@ -1027,6 +1050,10 @@ i32 main()
 
     randSetSeed(time(NULL));
     timeInit();
+
+    /*for(i32 i = 0; i < 1000; ++i) {
+        LOG("%g", randf64(0.0, 2.4578));
+    }*/
 
     SDL_SetMainReady();
     i32 sdl = SDL_Init(SDL_INIT_VIDEO);
