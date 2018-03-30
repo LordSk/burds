@@ -12,7 +12,7 @@ struct Gene
 };
 
 #define NEAT_MAX_GENES 512
-#define NEAT_MAX_NODES 128
+#define NEAT_MAX_NODES 64
 #define NEAT_MAX_LAYERS 64
 #define NEAT_MAX_SPECIES 1024
 
@@ -64,8 +64,12 @@ struct NeatEvolutionParams
     f64 crossoverKeepDisabled = 0.75; // crossover chance to keep a gene disabled
     f64 mutateWeight = 0.8; // mutation chance to alter a connection weight
     f64 mutateResetWeight = 0.1; // mutation chance ton reset a weight if chosen for alteration
+    f64 mutateWeightStep = 0.1; // mutation weight step ( rand(-step, step) )
     f64 mutateAddConn = 0.05; // mutation chance to add a connection between 2 nodes
     f64 mutateAddNode = 0.03; // mutation chance to split an existing connection to add a node in between
+    f64 mutateDisableGene = 0.005; // mutation chance to disable a gene
+    f64 mutateRemoveGene = 0.001; // mutation chance to remove completely a gene
+    i32 speciesStagnationMax = 20; // maximum generations a species is allowed to stagnate
 };
 
 struct NeatSpeciation
@@ -98,3 +102,4 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
 void neatTestTryReproduce(const Genome& g1, const Genome& g2);
 void neatTestCrossover(const Genome* parentA, const Genome* parentB, Genome* dest);
 f64 neatTestCompability(const Genome* ga, const Genome* gb, const NeatEvolutionParams& params);
+void neatTestPropagate();

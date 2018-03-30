@@ -59,9 +59,9 @@ bool init()
     neatGenomeAlloc(xorNextGen, XOR_COUNT);
     resetSimulation();
 
-    /*evolParam.compC2 = 2.0;
-    evolParam.compC3 = 3.0;
-    evolParam.compT = 1.0;*/
+    //evolParam.compC2 = 2.0;
+    //evolParam.compC3 = 3.0;
+    //evolParam.compT = 2.0;
     //evolParam.mutateAddNode = 0.01;
 
 #if 0
@@ -198,6 +198,7 @@ void nextGeneration()
         for(i32 i = 0; i < XOR_COUNT; i++) {
             f64 nodeValOut = xorNN[i]->nodeValues[inputCount];
             f64 output = (nodeValOut + 1.0) * 0.5;
+            //f64 output = nodeValOut;
             assert(output >= 0.0 && output <= 1.0);
             i32 bOut = output < 0.5 ? 0 : 1;
             xorFitness[i] += fabs(expect - output);

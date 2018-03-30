@@ -6,7 +6,7 @@
 #include <malloc.h>
 
 #define activation(x) tanh(x)
-//#define activation(x) (1.0/(1.0+exp(-4.9*x)) + 0.5)
+//#define activation(x) (1.0/(1.0+exp(-4.9*x)))
 
 NeatSpeciation::~NeatSpeciation()
 {
@@ -501,7 +501,7 @@ static i32 selectRoulette(const i32 count, f64* fitness, f64 totalFitness)
     for(i32 j = 0; j < count; ++j) {
         s += fitness[j];
         if(r < s) {
-            LOG("total=%g s=%g r=%g j=%d", totalFitness, s, r, j);
+            //LOG("total=%g s=%g r=%g j=%d", totalFitness, s, r, j);
             return j;
         }
     }
@@ -548,6 +548,7 @@ static void crossover(Genome* dest, const Genome* parentA, const Genome* parentB
 
     u8 resultA[NEAT_MAX_GENES] = {0};
     u8 resultB[NEAT_MAX_GENES] = {0};
+    u8 genesOutParent[NEAT_MAX_GENES];
 
     // compare A to B
     for(i32 a = 0; a < geneCountA; ++a) {
@@ -575,9 +576,11 @@ static void crossover(Genome* dest, const Genome* parentA, const Genome* parentB
                 const i32 gid = geneCountOut++;
                 if(randf64(0.0, 1.0) < 0.5) {
                     genesOut[gid] = genesA[a];
+                    genesOutParent[gid] = 0;
                 }
                 else {
                     genesOut[gid] = genesB[b];
+                    genesOutParent[gid] = 1;
                 }
                 geneDisabledOut[gid] = randf64(0.0, 1.0) < geneStayDisabledChance ?
                             (geneDisabledA[a] | geneDisabledB[b]) : 0;
@@ -591,12 +594,13 @@ static void crossover(Genome* dest, const Genome* parentA, const Genome* parentB
         if(resultA[a] == DISJOINT || resultA[a] == EXCESS) {
             const i32 gid = geneCountOut++;
             genesOut[gid] = genesA[a];
+            genesOutParent[gid] = 0;
             geneDisabledOut[gid] = randf64(0.0, 1.0) < geneStayDisabledChance ? geneDisabledA[a] : 0;
         }
     }
     // still inherit not common disjoint from less fit parent
     for(i32 b = 0; b < geneCountB; ++b) {
-        if(resultB[b] == DISJOINT || resultB[b] == EXCESS) {
+        if(resultB[b] == DISJOINT) {
             const i32 markB = genesB[b].historicalMarker;
 
             bool found = false;
@@ -611,10 +615,73 @@ static void crossover(Genome* dest, const Genome* parentA, const Genome* parentB
             if(!found) {
                 const i32 gid = geneCountOut++;
                 genesOut[gid] = genesB[b];
+                genesOutParent[gid] = 1;
                 geneDisabledOut[gid] = randf64(0.0, 1.0) < geneStayDisabledChance ? geneDisabledB[b] : 0;
             }
         }
     }
+
+    const i32 geneCountOut2 = geneCountOut;
+
+    // TODO: purge same connections
+    constexpr auto cmpGenes = [](const Gene& a, const Gene& b, u8 parentA, u8 parentB) {
+        if(a.nodeIn < b.nodeIn) return -1;
+        if(a.nodeIn > b.nodeIn) return 1;
+        if(a.nodeOut < b.nodeOut) return -1;
+        if(a.nodeOut > b.nodeOut) return 1;
+        if(parentA < parentB) return -1;
+        if(parentA > parentB) return 1;
+        return 0;
+    };
+
+    // bubble sort by nodeIn/nodeOut
+    bool sorting = true;
+    while(sorting) {
+        sorting = false;
+        for(i32 i = 1; i < geneCountOut2; ++i) {
+            if(cmpGenes(genesOut[i-1], genesOut[i], genesOutParent[i-1], genesOutParent[i]) == 1) {
+                sorting = true;
+                // swap
+                Gene geneTmp = genesOut[i-1];
+                genesOut[i-1] = genesOut[i];
+                genesOut[i] = geneTmp;
+                u8 disTmp = geneDisabledOut[i-1];
+                geneDisabledOut[i-1] = geneDisabledOut[i];
+                geneDisabledOut[i] = disTmp;
+                u8 parentTmp = genesOutParent[i-1];
+                genesOutParent[i-1] = genesOutParent[i];
+                genesOutParent[i] = parentTmp;
+            }
+        }
+    }
+
+    i16 checkNodeIn = -1;
+    i16 checkNodeOut = -1;
+    i32 sameConnCount = 0;
+    Gene* genesPurged = stack_arr(Gene,geneCountOut2);
+    u8* genesPurgedDisabled = stack_arr(u8,geneCountOut2);
+    i32 genesPurgedCount = 0;
+
+    for(i32 i = 0; i < geneCountOut2; ++i) {
+        const Gene& ge = genesOut[i];
+        if(checkNodeIn == ge.nodeIn && checkNodeOut == ge.nodeOut) {
+            sameConnCount++;
+        }
+        else {
+            checkNodeIn = ge.nodeIn;
+            checkNodeOut = ge.nodeOut;
+            const i32 gid = genesPurgedCount++;
+            genesPurged[gid] = ge;
+            genesPurgedDisabled[gid] = geneDisabledOut[i];
+        }
+    }
+
+    /*if(sameConnCount) {
+       LOG("crossover same connections: %d", sameConnCount);
+    }*/
+
+    memmove(genesOut, genesPurged, sizeof(genesOut[0]) * genesPurgedCount);
+    const i32 geneOutCountFinal = genesPurgedCount;
 
     // reconstruct metadata
     const i32 inputCount = parentA->inputNodeCount;
@@ -625,9 +692,7 @@ static void crossover(Genome* dest, const Genome* parentA, const Genome* parentB
     dest->totalNodeCount = inputCount + outputCount;
     mem_zero(dest->nodePos);
 
-    const i32 geneCountOut2 = geneCountOut;
-
-    for(i32 i = 0; i < geneCountOut2; ++i) {
+    for(i32 i = 0; i < geneOutCountFinal; ++i) {
         const i16 nodeIn = genesOut[i].nodeIn;
         const i16 nodeOut = genesOut[i].nodeOut;
         if(nodeIn >= dest->totalNodeCount) {
@@ -664,9 +729,10 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
         speciesMaxFitness[s] = max(fitness[i], speciesMaxFitness[s]);
     }
 
+    // species stagnation
     u8* deleteSpecies = stack_arr(u8,speciesCount);
 #if 1
-    constexpr i32 stagnationT = 15;
+    const i32 stagnationT = params.speciesStagnationMax;
     u16* specStagnation = neatSpec->stagnation;
     f64* specStagMaxFitness = neatSpec->maxFitness;
 
@@ -687,6 +753,19 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
         }
     }
 #endif
+
+    // keep best species always
+    f64 bestMaxFitness = 0.0;
+    i32 bestSpecies = -1;
+    for(i32 s = 0; s < speciesCount; ++s) {
+        if(speciesMaxFitness[s] > bestMaxFitness) {
+            bestMaxFitness = speciesMaxFitness[s];
+            bestSpecies = s;
+        }
+    }
+    assert(bestSpecies != -1);
+    deleteSpecies[bestSpecies] = false;
+    specStagnation[bestSpecies] = 0;
 
 #if 1
     FitnessPair* fpair = stack_arr(FitnessPair,popCount);
@@ -745,18 +824,21 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
 
     memmove(genomes[0], nextGenomes[0], sizeof(Genome) * parentCount);
 
+    // all parents are in genomes[0,parentCount]
+
     // copy champion of each species unchanged
-    // TODO: copy at the end
     i32 championCount = 0;
     i32 champCheckSpec = -1;
     for(i32 i = 0; i < parentCount; ++i) {
         Genome* g = genomes[i];
         const i32 spec = g->species;
         if(spec != champCheckSpec && speciesPopCount[spec] > 4) {
-            memmove(nextGenomes[championCount++], g, sizeof(Genome));
+            memmove(nextGenomes[popCount - 1 - (championCount++)], g, sizeof(Genome));
             champCheckSpec = spec;
         }
     }
+
+    const i32 popCountMinusChamps = popCount - championCount;
 
     // fitness sharing
     f64* normFitness = stack_arr(f64,parentCount);
@@ -771,11 +853,17 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
     Genome** potentialMates = stack_arr(Genome*,parentCount);
     f64* pmFitness = stack_arr(f64,parentCount);
 
-    for(i32 i = championCount; i < popCount; ++i) {
+    for(i32 i = 0; i < popCountMinusChamps; ++i) {
         //const i32 idA = randi64(0, parentCount-1);
         const i32 idA = selectRoulette(parentCount, normFitness, totalNormFitness);
         const Genome* mateA = genomes[idA];
         const i32 speciesA = mateA->species;
+
+        // no crossover
+        if(randf64(0.0, 1.0) < 0.25) {
+            memmove(nextGenomes[i], mateA, sizeof(Genome));
+            continue;
+        }
 
         // find same species mates
         i32 potentialMatesCount = 0;
@@ -825,12 +913,31 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
     // a new structural change has already been assigned an innovation number
     resetStructuralChanges();
 
-    i32 newConnectionMutationCount = 0;
-    i32 newNodeMutationCount = 0;
+    i32 mutConnections = 0;
+    i32 mutNodes = 0;
+    i32 mutGenesDisabled = 0;
+    i32 mutGenesRemoved = 0;
 
-    for(i32 i = championCount; i < popCount; ++i) {
+    for(i32 i = 0; i < popCountMinusChamps; ++i) {
         Genome& g = *nextGenomes[i];
         //Genome& g = *genomes[i];
+
+        // disable gene
+        if(randf64(0.0, 1.0) < params.mutateDisableGene) {
+            const i32 gid = randi64(0, g.geneCount-1);
+            g.geneDisabled[gid] = true;
+            mutGenesDisabled++;
+        }
+
+        // remove gene
+        if(randf64(0.0, 1.0) < params.mutateRemoveGene) {
+            assert(g.geneCount > 1);
+            const i32 gid = randi64(0, g.geneCount-1);
+            g.genes[gid] = g.genes[g.geneCount-1];
+            g.geneDisabled[gid] = g.geneDisabled[g.geneCount-1];
+            g.geneCount--;
+            mutGenesRemoved++;
+        }
 
         // change weight
         if(randf64(0.0, 1.0) < params.mutateWeight) {
@@ -841,7 +948,8 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
                 g.genes[gid].weight = randf64(-1.0, 1.0);
             }
             else {
-                g.genes[gid].weight += randf64(-0.5, 0.5);
+                f64 step = params.mutateWeightStep;
+                g.genes[gid].weight += randf64(-step, step);
             }
         }
 
@@ -876,7 +984,7 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
                 gene.nodeOut = nodeOut;
                 gene.weight = randf64(-1.0, 1.0);
                 gene.historicalMarker = newInnovationNumber(nodeIn, nodeOut, g.nodeOriginMarker);
-                newConnectionMutationCount++;
+                mutConnections++;
             }
         }
 
@@ -906,7 +1014,7 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
             g.genes[con2].historicalMarker = newInnovationNumber(g.genes[con2].nodeIn,
                                                                  g.genes[con2].nodeOut,
                                                                  g.nodeOriginMarker);
-            newNodeMutationCount++;
+            mutNodes++;
         }
     }
 
@@ -915,7 +1023,9 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
     }
 
     if(verbose) {
-        LOG("NEAT> mutations - connections=%d nodes=%d", newConnectionMutationCount, newNodeMutationCount);
+        LOG("NEAT> mutations - connections=%d nodes=%d disabled=%d removed=%d",
+            mutConnections, mutNodes,
+            mutGenesDisabled, mutGenesRemoved);
         LOG("NEAT> structural matches=%d", g_structMatchesFound);
     }
 #endif
@@ -923,13 +1033,13 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
     memmove(genomes[0], nextGenomes[0], sizeof(Genome) * popCount);
 
     // speciation
-    u8 speciesExists[NEAT_MAX_SPECIES] = {0};
+    u8 speciesPrevExisted[NEAT_MAX_SPECIES] = {0};
     for(i32 s = 0; s < speciesCount; ++s) {
-        speciesExists[s] = (speciesPopCount[s] != 0);
+        speciesPrevExisted[s] = (speciesPopCount[s] != 0);
     }
 
     Genome* speciesRep = neatSpec->speciesRep;
-    mem_zero(neatSpec->speciesPopCount);
+    mem_zero(neatSpec->speciesPopCount); // reset species population count
     f64 biggestDist = 0.0;
 
     const f64 c1 = params.compC1;
@@ -942,7 +1052,7 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
 
         bool found = false;
         for(i32 s = 0; s < speciesCount; ++s) {
-            if(!speciesExists[s] && speciesPopCount[s] == 0) continue;
+            if(!speciesPrevExisted[s] && speciesPopCount[s] == 0) continue;
 
             f64 dist = compatibilityDistance(g.genes, speciesRep[s].genes, g.geneCount,
                                              speciesRep[s].geneCount, c1, c2, c3);
@@ -961,7 +1071,7 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
             // find a species slot
             i32 sid = -1;
             for(i32 s = 0; s < NEAT_MAX_SPECIES; ++s) {
-                if(!speciesExists[s]) {
+                if(!speciesPrevExisted[s] && speciesPopCount[s] == 0) {
                     sid = s;
                     break;
                 }
@@ -1125,6 +1235,9 @@ f64 neatTestCompability(const Genome* ga, const Genome* gb, const NeatEvolutionP
 
 void neatTestPropagate()
 {
+    constexpr i32 inputCount = 3;
+    constexpr i32 outputCount = 1;
+
     f64 input[3] = { randf64(0, 1), randf64(0, 1), 1.0 };
     f64 hiddenVal;
     f64 weightItoH[3] = { randf64(-1.0, 1.0), randf64(-1.0, 1.0), randf64(-1.0, 1.0) };
@@ -1134,15 +1247,42 @@ void neatTestPropagate()
     for(i32 i = 0; i < 3; i++) {
         val += input[i] * weightItoH[i];
     }
-    hiddenVal = tanh(val);
+    hiddenVal = activation(val);
 
-    f64 output = tanh(weightO * hiddenVal);
+    f64 output = activation(weightO * hiddenVal);
 
     NeatEvolutionParams params;
     NeatSpeciation neatSpec;
     Genome* g;
     neatGenomeAlloc(&g, 1);
-    neatGenomeInit(&g, 1, 2, 1, params, &neatSpec);
+    neatGenomeInit(&g, 1, inputCount, outputCount, params, &neatSpec);
 
+    i32 geneCount = 0;
+    for(i16 in = 0; in < inputCount; ++in) {
+        for(i16 out = 0; out < outputCount; ++out) {
+            const i32 gid = geneCount++;
+            g->genes[gid].weight = weightItoH[gid];
+            g->genes[gid].nodeOut = 4;
+        }
+    }
+    const i32 gid = g->geneCount++;
+    g->genes[gid] = { gid, inputCount+outputCount, inputCount, weightO };
+    g->totalNodeCount = inputCount+outputCount+1;
 
+    NeatNN* nn;
+    neatGenomeMakeNN(&g, 1, &nn);
+    nn->setInputs(input, inputCount);
+
+    for(i32 i = 0; i < 3; ++i) {
+        assert(nn->nodeValues[i] == input[i]);
+    }
+
+    for(i32 i = 0; i < 3; ++i) {
+        assert(nn->computations[i].weight == weightItoH[i]);
+    }
+    assert(nn->computations[inputCount].weight == weightO);
+
+    neatNnPropagate(&nn, 1);
+
+    assert(output == nn->nodeValues[inputCount]);
 }

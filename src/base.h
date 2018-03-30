@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <time.h>
+#include <random>
 
 typedef int8_t i8;
 typedef uint8_t u8;
@@ -53,6 +54,9 @@ i64 timeGetMicro();
 // RANDOM
 extern u64 g_RandSeed;
 
+static std::random_device g_randomDevice;
+static std::mt19937 g_randomMt(g_randomDevice());
+
 inline void randSetSeed(u64 seed)
 {
     g_RandSeed = seed;
@@ -85,8 +89,10 @@ inline T clamp(T val, T vmin, T vmax)
 
 inline f64 randf64(f64 vmin, f64 vmax)
 {
-    u64 r = xorshift64star();
-    return vmin + ((f64)r/(f64)U64_MAX) * (vmax - vmin);
+    std::uniform_real_distribution<f64> dis(vmin, vmax);
+    return dis(g_randomMt);
+    /*u64 r = xorshift64star();
+    return vmin + ((f64)r/(f64)U64_MAX) * (vmax - vmin);*/
 }
 
 

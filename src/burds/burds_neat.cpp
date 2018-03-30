@@ -36,7 +36,8 @@ constexpr i32 SUBPOP_MAX_COUNT = BIRD_COUNT;
 #define FRICTION_AIR_ANGULAR 0.05f
 #define FRICTION_AIR 0.05f
 
-#define WING_STRENGTH 5000.f
+#define WING_STRENGTH 20000.f
+#define WING_BRAKE 0.2
 #define WING_STRENGTH_ANGULAR (PI * 10.0)
 
 #define ANGULAR_VELOCITY_MAX (TAU * 2.0)
@@ -57,7 +58,7 @@ constexpr i32 SUBPOP_MAX_COUNT = BIRD_COUNT;
 
 struct BirdInput
 {
-    u8 left, right, flapLight, flapHard, brakeLight, brakeHard;
+    u8 left, right, flap, flapHard, brake, brakeHard;
 };
 
 enum {
@@ -92,6 +93,7 @@ BirdInput birdInput[BIRD_COUNT];
 
 f32 birdHealth[BIRD_COUNT];
 u8 birdDead[BIRD_COUNT];
+u8 birdDeadFromGround[BIRD_COUNT];
 i32 birdApplePositionId[BIRD_COUNT];
 
 Vec2 applePosList[APPLE_POS_LIST_COUNT];
@@ -141,10 +143,12 @@ void resetBirdColors()
     const u32 colorMin = 0x0;
 
     for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
-        Color3 c;
-        c.r = randi64(colorMin, colorMax);
-        c.g = randi64(colorMin, colorMax);
-        c.b = randi64(colorMin, colorMax);
+        Color3 c = {0, 0, 0};
+        while((c.r + c.g + c.b) / 3.0 < 100) {
+            c.r = randi64(colorMin, colorMax);
+            c.g = randi64(colorMin, colorMax);
+            c.b = randi64(colorMin, colorMax);
+        }
         speciesColor[i] = c;
     }
 }
@@ -191,6 +195,7 @@ void resetBirds()
     mem_zero(birdApplePositionId);
     mem_zero(birdAppleEatenCount);
     mem_zero(birdDead);
+    mem_zero(birdDeadFromGround);
     mem_zero(birdFitness);
     mem_zero(birdFitnessAcc);
 
@@ -249,7 +254,7 @@ void resetSimulation()
     mem_zero(pastGenStats);
 
     neatSpec = {};
-    neatGenomeInit(birdCurGen, BIRD_COUNT, 4, 4, evolParam, &neatSpec); // INPUTS: 4, OUPUTS: 4
+    neatGenomeInit(birdCurGen, BIRD_COUNT, 6, 4, evolParam, &neatSpec); // INPUTS: 6, OUPUTS: 4
     neatGenomeMakeNN(birdCurGen, BIRD_COUNT, birdNN);
     neatGenomeComputeNodePos(birdCurGen, BIRD_COUNT);
 }
@@ -281,8 +286,8 @@ bool init()
     evolParam.compC1 = 2.0;
     evolParam.compC2 = 2.0;
     evolParam.compC3 = 3.0;
-    evolParam.compT = 1.5;
-    evolParam.mutateAddConn = 0.05;
+    evolParam.compT = 2.0;
+    //evolParam.mutateAddConn = 0.05;
     evolParam.mutateAddNode = 0.1;
 
     neatGenomeAlloc(birdCurGen, BIRD_COUNT);
@@ -449,18 +454,47 @@ void ui_birdViewer()
 
     ImGui::Separator();
 
-    ImGui::TextUnformatted("Output");
+    const ImVec4 titleColor(0.4, 0.62, 1.0, 1.0);
+
+    ImGui::BeginGroup();
+    ImGui::TextColored(titleColor, "Input");
+
+    Vec2 applePos = applePosList[birdApplePositionId[dbgViewerBirdId]];
+    f64 appleOffsetX = applePos.x - birdPos[dbgViewerBirdId].x;
+    f64 appleOffsetY = applePos.y - birdPos[dbgViewerBirdId].y;
+
+    ImGui::Text("velX: %g", birdVel[dbgViewerBirdId].x / 1000.0);
+    ImGui::Text("velY: %g", birdVel[dbgViewerBirdId].y / 1000.0);
+    ImGui::Text("appleOffsetX: %g", appleOffsetX / 2000.0);
+    ImGui::Text("appleOffsetY: %g", appleOffsetY / 2000.0);
+    ImGui::Text("rot: %g", birdRot[dbgViewerBirdId] / PI);
+    ImGui::EndGroup();
+
+    ImGui::Separator();
+
+    ImGui::TextColored(titleColor, "Fitness factors");
+    f64 distFactor = 1.0 - (min(vec2Distance(&birdPos[dbgViewerBirdId],
+                                             &appleTf[dbgViewerBirdId].pos), 2000) / 2000.0);
+    f64 healthFactor = birdHealth[dbgViewerBirdId] / HEALTH_MAX;
+    ImGui::Text("distance: %g", distFactor);
+    ImGui::Text("health: %g", healthFactor);
+
+    ImGui::Separator();
+
+    ImGui::BeginGroup();
+    ImGui::TextColored(titleColor, "Output");
     f32 left = birdInput[dbgViewerBirdId].left;
     f32 right = birdInput[dbgViewerBirdId].right;
-    ImGui_ColoredRect(ImVec2(20,20), ImVec4(left, right, 0, 1));
+    ImGui_ColoredRect(ImVec2(20,20), ImVec4(left/255.0, right/255.0, 0, 1));
     ImGui::SameLine();
 
-    f32 flap = (birdInput[dbgViewerBirdId].flapHard ? 2:birdInput[dbgViewerBirdId].flapLight) * 0.5;
+    f64 flap = birdInput[dbgViewerBirdId].flap / 255.0;
     ImGui_ColoredRect(ImVec2(20,20), ImVec4(0, flap, flap, 1));
     ImGui::SameLine();
 
-    f32 brake = (birdInput[dbgViewerBirdId].brakeHard ? 2:birdInput[dbgViewerBirdId].brakeLight) * 0.5;
+    f64 brake = birdInput[dbgViewerBirdId].brake / 255.0;
     ImGui_ColoredRect(ImVec2(20,20), ImVec4(brake, 0, 0, 1));
+    ImGui::EndGroup();
 
     ImGui::Separator();
 
@@ -529,7 +563,7 @@ void ui_speciation()
         sprintf(buff, "%d", neatSpec.speciesPopCount[i]);
         ImGui::ProgressBar(neatSpec.speciesPopCount[i]/(f32)maxPopCount, ImVec2(100,0), buff);
         ImGui::SameLine();
-        ImGui::TextColored(subPopColors[i], "%g", neatSpec.maxFitness[i]);
+        ImGui::TextColored(subPopColors[i], "%g | %d", neatSpec.maxFitness[i], neatSpec.stagnation[i]);
 
         ImGui::PopStyleColor(1);
     }
@@ -598,24 +632,32 @@ void updateNNs()
         Vec2 dir = {cosf(rot), sinf(rot)};
         f32 diffRot = vec2AngleBetween(&dir, &diff);
 
-        f64 inputs[4] = {
+        f64 inputs[6] = {
             velX / 1000.0,
             velY / 1000.0,
-            diffRot / PI,
-            vec2Len(&diff) / 3000.0
+            appleOffsetX / 2000.0,
+            appleOffsetY / 2000.0,
+            rot / PI,
+            birdFlapLeftCd[i] <= 0.0f ? 1.0 : 0.0
+            //diffRot / PI,
+            //vec2Len(&diff) / 3000.0
         };
 
-        birdNN[i]->setInputs(inputs, 4);
+        birdNN[i]->setInputs(inputs, arr_count(inputs));
     }
 
     neatNnPropagate(aliveNN, aliveCount);
 
     // get neural net output
+    const i32 firstOutputId = birdCurGen[0]->inputNodeCount;
+    const i32 outputCount = birdCurGen[0]->outputNodeCount;
+
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         if(birdDead[i]) continue;
         f64 out[4];
-        memmove(out, &birdNN[i]->nodeValues[4], sizeof(out));
+        memmove(out, &birdNN[i]->nodeValues[firstOutputId], sizeof(out[0]) * outputCount);
 
+        // tanh
         out[0] = (out[0] + 1.0) * 0.5;
         out[1] = (out[1] + 1.0) * 0.5;
         out[2] = (out[2] + 1.0) * 0.5;
@@ -626,14 +668,10 @@ void updateNNs()
         assert(out[2] >= 0 && out[2] <= 1.0);
         assert(out[3] >= 0 && out[3] <= 1.0);
 
-        birdInput[i].left = out[0] > 0.5;
-        birdInput[i].right = out[1] > 0.5;
-
-        birdInput[i].flapLight = out[2] > 0.33 && out[2] <= 0.66;
-        birdInput[i].flapHard = out[2] > 0.66;
-
-        birdInput[i].brakeLight = out[3] > 0.33 && out[3] <= 0.66;
-        birdInput[i].brakeHard = out[3] > 0.66;
+        birdInput[i].left = clamp(out[0] - 0.5, 0.0, 0.5) * 2.0 * 255;
+        birdInput[i].right = clamp(out[1] - 0.5, 0.0, 0.5) * 2.0 * 255;
+        birdInput[i].flap = clamp(out[2] - 0.5, 0.0, 0.5) * 2.0 * 255;
+        birdInput[i].brake = clamp(out[3] - 0.5, 0.0, 0.5) * 2.0 * 255;
     }
 }
 
@@ -654,6 +692,7 @@ void updateMechanics()
 
     // check if we touched the apple
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        if(birdDead[i]) continue;
         Vec2* applePos = &applePosList[birdApplePositionId[i]];
         if(vec2Distance(applePos, &birdPos[i]) < APPLE_RADIUS) {
             birdApplePositionId[i]++;
@@ -665,6 +704,7 @@ void updateMechanics()
     }
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        if(birdDead[i]) continue;
         f32 dist = vec2Distance(&applePosList[birdApplePositionId[i]], &birdPos[i]);
         birdShortestDistToNextApple[i] = min(birdShortestDistToNextApple[i], dist);
     }
@@ -691,10 +731,15 @@ void updateMechanics()
         if(birdDead[i]) continue;
         f64 applesFactor = birdAppleEatenCount[i];
         f64 shortDistFactor = APPLE_RADIUS / min(birdShortestDistToNextApple[i], 5000); // 0.0 -> 1.0
-        f64 distFactor = APPLE_RADIUS / min(vec2Distance(&birdPos[i], &appleTf[i].pos), 5000); // 0.0 -> 1.0
+        //f64 distFactor = APPLE_RADIUS / min(vec2Distance(&birdPos[i], &appleTf[i].pos), 5000); // 0.0 -> 1.0
+        f64 distFactor = 1.0 - (min(vec2Distance(&birdPos[i], &appleTf[i].pos), 2000) / 2000.0); // 0.0 -> 1.0
+        f64 healthFactor = birdHealth[i] / HEALTH_MAX;
 
-        birdFitnessAcc[i] += (distFactor * distFactor) * shortDistFactor;
-        birdFitness[i] = birdFitnessAcc[i] * (applesFactor + 1.0);
+        //birdFitnessAcc[i] += distFactor * distFactor * distFactor * shortDistFactor * healthFactor;
+        //birdFitness[i] = birdFitnessAcc[i] * (applesFactor + 1.0);
+        birdFitnessAcc[i] += (healthFactor + distFactor * distFactor) * FRAME_DT;
+        birdFitness[i] = birdFitnessAcc[i];
+        birdFitness[i] += birdFitness[i] * 0.1 * applesFactor;
     }
 #else
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
@@ -704,7 +749,7 @@ void updateMechanics()
            birdFitnessAcc[i] += (birdDistToNextAppleOld[i] - birdDistToNextApple[i]) / 1000.0;
         }
 
-        birdFitness[i] = 0.001 + birdFitnessAcc[i] * (birdAppleEatenCount[i] + 1.0);
+        birdFitness[i] = 1.0 + birdFitnessAcc[i] * (birdAppleEatenCount[i] + 1.0);
     }
 #endif
 
@@ -802,42 +847,38 @@ void updatePhysics()
     // apply bird input
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         if(birdDead[i]) continue;
-        u8 rotLeft = birdInput[i].left;
-        u8 rotRight = birdInput[i].right;
-        u8 flap = 0;
+        f64 rotLeft = birdInput[i].left / 255.0;
+        f64 rotRight = birdInput[i].right / 255.0;
+        f64 flap = 0;
+        f64 brake = 0;
+
         if(birdFlapLeftCd[i] <= 0.0f) {
-            if(birdInput[i].flapHard) {
-                flap = 2;
+            if(birdInput[i].brake) {
+                brake = birdInput[i].brake / 255.0;
             }
-            else if(birdInput[i].flapLight) {
-                flap = 1;
+            else if(birdInput[i].flap) {
+                flap = birdInput[i].flap / 255.0;
             }
-        }
-        u8 brake = 0;
-        if(birdInput[i].brakeHard) {
-            brake = 2;
-        }
-        else if(birdInput[i].brakeLight) {
-            brake = 1;
         }
 
         birdRot[i] += rotRight * WING_STRENGTH_ANGULAR * FRAME_DT +
                       rotLeft  * -WING_STRENGTH_ANGULAR * FRAME_DT;
 
-        if(brake) {
-            birdVel[i].x *= 1.0 - 5.0 * brake * FRAME_DT;
-            birdVel[i].y *= 1.0 - 5.0 * brake * FRAME_DT;
+        if(brake > 0.0) {
+            birdRot[i] = brake * TAU;
+            birdVel[i].x *= 1.0 - WING_BRAKE;
+            birdVel[i].y *= 1.0 - WING_BRAKE;
+            birdFlapLeftCd[i] = WING_FLAP_TIME;
+            birdFlapRightCd[i] = WING_FLAP_TIME;
         }
-        else {
-            if(flap) {
-                Vec2 force = {(f32)(cosf(birdRot[i]) * WING_STRENGTH * FRAME_DT * flap),
-                              (f32)(sinf(birdRot[i]) * WING_STRENGTH * FRAME_DT * flap)};
+        else if(flap > 0.0) {
+            Vec2 force = {(f32)(cosf(birdRot[i]) * WING_STRENGTH * FRAME_DT * flap),
+                          (f32)(sinf(birdRot[i]) * WING_STRENGTH * FRAME_DT * flap)};
 
-                birdVel[i].x += force.x;
-                birdVel[i].y += force.y;
-                birdFlapLeftCd[i] = WING_FLAP_TIME;
-                birdFlapRightCd[i] = WING_FLAP_TIME;
-            }
+            birdVel[i].x += force.x;
+            birdVel[i].y += force.y;
+            birdFlapLeftCd[i] = WING_FLAP_TIME;
+            birdFlapRightCd[i] = WING_FLAP_TIME;
         }
     }
 
@@ -860,8 +901,7 @@ void updatePhysics()
     }
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         //birdRot[i] += birdAngularVel[i] * FRAME_DT;
-        if(birdRot[i] > TAU) birdRot[i] -= TAU;
-        else if(birdRot[i] < TAU) birdRot[i] += TAU;
+        birdRot[i] = fmod(birdRot[i], PI);
     }
 
     // check for ground collision
@@ -870,8 +910,12 @@ void updatePhysics()
             birdPos[i].y = GROUND_Y;
             birdVel[i].x = 0;
             birdVel[i].y = 0;
-            birdDead[i] = 1;
-            //birdAngularVel[i] = 0;
+
+            if(!birdDead[i]) {
+                birdDead[i] = true;
+                birdDeadFromGround[i] = true;
+                birdFitness[i] *= 0.8; // death from ground penalty
+            }
         }
     }
 }
@@ -1054,6 +1098,8 @@ i32 main()
     /*for(i32 i = 0; i < 1000; ++i) {
         LOG("%g", randf64(0.0, 2.4578));
     }*/
+
+    //neatTestPropagate();
 
     SDL_SetMainReady();
     i32 sdl = SDL_Init(SDL_INIT_VIDEO);
