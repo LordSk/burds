@@ -3,6 +3,10 @@
 #include <assert.h>
 #include <string.h>
 
+#define NEAT_MAX_GENES 512
+#define NEAT_MAX_NODES 64
+#define NEAT_MAX_SPECIES 1024
+
 struct Gene
 {
     i32 historicalMarker;
@@ -10,11 +14,6 @@ struct Gene
     i16 nodeOut;
     f64 weight;
 };
-
-#define NEAT_MAX_GENES 512
-#define NEAT_MAX_NODES 64
-#define NEAT_MAX_LAYERS 64
-#define NEAT_MAX_SPECIES 1024
 
 struct NodePos
 {
@@ -69,7 +68,7 @@ struct NeatEvolutionParams
     f64 mutateAddNode = 0.03; // mutation chance to split an existing connection to add a node in between
     f64 mutateDisableGene = 0.005; // mutation chance to disable a gene
     f64 mutateRemoveGene = 0.001; // mutation chance to remove completely a gene
-    i32 speciesStagnationMax = 20; // maximum generations a species is allowed to stagnate
+    i32 speciesStagnationMax = 15; // maximum generations a species is allowed to stagnate
 };
 
 struct NeatSpeciation
@@ -88,7 +87,7 @@ void neatGenomeDealloc(Genome** genomes);
 
 void neatGenomeInit(Genome** genomes, const i32 popCount, i32 inputCount, i32 outputCount,
                     const NeatEvolutionParams& params, NeatSpeciation* speciation);
-void neatGenomeMakeNN(Genome** genomes, const i32 count, NeatNN** nn, bool verbose = false);
+void neatGenomeAllocMakeNN(Genome** genomes, const i32 count, NeatNN** nn, bool verbose = false);
 void neatGenomeComputeNodePos(Genome** genomes, const i32 popCount);
 void neatGenomeSpeciation(Genome** genomes, const i32 popCount);
 

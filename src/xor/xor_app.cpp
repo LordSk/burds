@@ -62,7 +62,8 @@ bool init()
     //evolParam.compC2 = 2.0;
     //evolParam.compC3 = 3.0;
     //evolParam.compT = 2.0;
-    //evolParam.mutateAddNode = 0.01;
+    evolParam.mutateDisableGene = 0.0;
+    evolParam.mutateRemoveGene = 0.0;
 
 #if 0
     testGen.inputNodeCount = 2;
@@ -150,7 +151,8 @@ void resetSimulation()
 
     neatSpec = {};
     neatGenomeInit(xorCurGen, XOR_COUNT, 2, 1, evolParam, &neatSpec);
-    neatGenomeMakeNN(xorCurGen, XOR_COUNT, xorNN);
+    neatNnDealloc(xorNN);
+    neatGenomeAllocMakeNN(xorCurGen, XOR_COUNT, xorNN);
     neatGenomeComputeNodePos(xorCurGen, XOR_COUNT);
 }
 
@@ -179,7 +181,7 @@ void nextGeneration()
     }
 
 #else
-    f64 input[4][2] = { {0, 0}, {1, 0}, {0, 1}, {1, 1} };
+    f64 input[4][3] = { {0, 0, 1.0}, {1, 0, 1.0}, {0, 1, 1.0}, {1, 1, 1.0} };
     i32 expected[4] = { 0, 1, 1, 0};
 
     const i32 inputCount = xorCurGen[0]->inputNodeCount;
@@ -244,7 +246,8 @@ void nextGeneration()
 
     LOG("evolution %d ----------", generationNumber);
     neatEvolve(xorCurGen, xorNextGen, xorFitness, XOR_COUNT, &neatSpec, evolParam, true);
-    neatGenomeMakeNN(xorCurGen, XOR_COUNT, xorNN);
+    neatNnDealloc(xorNN);
+    neatGenomeAllocMakeNN(xorCurGen, XOR_COUNT, xorNN);
     neatGenomeComputeNodePos(xorCurGen, XOR_COUNT);
 }
 

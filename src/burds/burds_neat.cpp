@@ -103,7 +103,7 @@ Line targetLine[BIRD_COUNT];
 
 Genome* birdCurGen[BIRD_COUNT];
 Genome* birdNextGen[BIRD_COUNT];
-NeatNN* birdNN[BIRD_COUNT];
+NeatNN* birdNN[BIRD_COUNT] = {0};
 NeatEvolutionParams evolParam;
 NeatSpeciation neatSpec;
 
@@ -255,7 +255,8 @@ void resetSimulation()
 
     neatSpec = {};
     neatGenomeInit(birdCurGen, BIRD_COUNT, 6, 4, evolParam, &neatSpec); // INPUTS: 6, OUPUTS: 4
-    neatGenomeMakeNN(birdCurGen, BIRD_COUNT, birdNN);
+    neatNnDealloc(birdNN);
+    neatGenomeAllocMakeNN(birdCurGen, BIRD_COUNT, birdNN);
     neatGenomeComputeNodePos(birdCurGen, BIRD_COUNT);
 }
 
@@ -289,6 +290,7 @@ bool init()
     evolParam.compT = 2.0;
     //evolParam.mutateAddConn = 0.05;
     evolParam.mutateAddNode = 0.1;
+    evolParam.mutateWeightStep = 0.5;
 
     neatGenomeAlloc(birdCurGen, BIRD_COUNT);
     neatGenomeAlloc(birdNextGen, BIRD_COUNT);
@@ -950,7 +952,10 @@ void nextGeneration()
         lastGenStats.maxFitness, lastGenStats.avgFitness);
 
     neatEvolve(birdCurGen, birdNextGen, birdFitness, BIRD_COUNT, &neatSpec, evolParam, true);
-    neatGenomeMakeNN(birdCurGen, BIRD_COUNT, birdNN);
+
+    neatNnDealloc(birdNN);
+    neatGenomeAllocMakeNN(birdCurGen, BIRD_COUNT, birdNN);
+
     neatGenomeComputeNodePos(birdCurGen, BIRD_COUNT);
 
     resetBirds();

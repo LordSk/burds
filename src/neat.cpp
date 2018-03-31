@@ -104,7 +104,6 @@ static f64 compatibilityDistance(const Gene* genes1, const Gene* genes2, i32 gen
     f64 avgWeightDiff = totalWeightDiff / matches;
 
     f64 dist = (c1 * disjoint)/N + (c2 * excess)/N + c3 * avgWeightDiff;
-    assert(dist < 100.0);
     return dist;
 }
 
@@ -319,7 +318,7 @@ static void sortGenesByHistoricalMarker(Genome* genome)
     }
 }
 
-void neatGenomeMakeNN(Genome** genomes, const i32 count, NeatNN** nn, bool verbose)
+void neatGenomeAllocMakeNN(Genome** genomes, const i32 count, NeatNN** nn, bool verbose)
 {
     i64 size = 0;
 
@@ -380,7 +379,7 @@ void neatNnPropagate(NeatNN** nn, const i32 nnCount)
         f64* nodeValues = nn[i]->nodeValues;
 
         i16 curNoteOut = computations[0].nodeOut;
-        f64 value = 1.0; // +bias
+        f64 value = 1.0;
 
         for(i32 c = 0; c < compCount; ++c) {
             const NeatNN::Computation& comp = computations[c];
@@ -390,7 +389,7 @@ void neatNnPropagate(NeatNN** nn, const i32 nnCount)
             else {
                 nodeValues[curNoteOut] = activation(clamp(value, -10.0, 10.0));
                 curNoteOut = comp.nodeOut;
-                value = comp.weight * nodeValues[comp.nodeIn] + 1.0; // +bias
+                value = comp.weight * nodeValues[comp.nodeIn] + 1.0;
             }
         }
         nodeValues[curNoteOut] = activation(clamp(value, -10.0, 10.0));
@@ -399,7 +398,7 @@ void neatNnPropagate(NeatNN** nn, const i32 nnCount)
 
 void neatNnDealloc(NeatNN** nn)
 {
-    free(nn[0]);
+    if(nn[0]) free(nn[0]);
 }
 
 struct FitnessPair
@@ -1099,7 +1098,7 @@ void neatGenomeComputeNodePos(Genome** genomes, const i32 popCount)
         NodePos* nodePos = genome.nodePos;
         i32 nodeProcessedLast = genome.inputNodeCount + genome.outputNodeCount - 1;
         i32 lastHiddenLayer = 0;
-        i32 layerNodeCount[NEAT_MAX_LAYERS] = {0};
+        i32 layerNodeCount[128] = {0};
 
         for(i32 j = 0; j < genome.inputNodeCount; ++j) {
             nodePos[j].layer = 0;
@@ -1270,7 +1269,7 @@ void neatTestPropagate()
     g->totalNodeCount = inputCount+outputCount+1;
 
     NeatNN* nn;
-    neatGenomeMakeNN(&g, 1, &nn);
+    neatGenomeAllocMakeNN(&g, 1, &nn);
     nn->setInputs(input, inputCount);
 
     for(i32 i = 0; i < 3; ++i) {
