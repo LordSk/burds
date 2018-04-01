@@ -38,7 +38,7 @@ constexpr i32 SUBPOP_MAX_COUNT = BIRD_COUNT;
 
 #define WING_STRENGTH 20000.f
 #define WING_BRAKE 0.5
-#define WING_STRENGTH_ANGULAR (PI * 10.0)
+#define WING_STRENGTH_ANGULAR (PI * 5.0)
 
 #define ANGULAR_VELOCITY_MAX (TAU * 2.0)
 
@@ -51,6 +51,9 @@ constexpr i32 SUBPOP_MAX_COUNT = BIRD_COUNT;
 #define STATS_HISTORY_COUNT 30
 
 #define TREE_COUNT 10
+#define CLOUD_COUNT 50
+#define CLOUD_MIN_X -20000.0
+#define CLOUD_MAX_X 20000.0
 
 struct BirdInput
 {
@@ -78,11 +81,19 @@ i32 tex_tree2;
 i32 tex_cloud1;
 i32 tex_cloud2;
 
+// trees
 Transform tree1Tf[TREE_COUNT];
 Transform tree2Tf[TREE_COUNT];
 i32 tree1Count;
 i32 tree2Count;
 
+// clouds
+Transform cloud1Tf[CLOUD_COUNT];
+Transform cloud2Tf[CLOUD_COUNT];
+i32 cloud1Count;
+i32 cloud2Count;
+
+// birds
 Transform birdBodyTf[BIRD_COUNT];
 Transform birdLeftWingTf[BIRD_COUNT];
 Transform birdRightWingTf[BIRD_COUNT];
@@ -94,6 +105,7 @@ f32 birdRot[BIRD_COUNT];
 f32 birdAngularVel[BIRD_COUNT];
 f32 birdFlapLeftCd[BIRD_COUNT];
 f32 birdFlapRightCd[BIRD_COUNT];
+u8 birdBraking[BIRD_COUNT];
 BirdInput birdInput[BIRD_COUNT];
 
 f32 birdHealth[BIRD_COUNT];
@@ -126,6 +138,8 @@ u8 mouseRightButDown = 0;
 
 i32 timeScale;
 
+bool showUi = true;
+bool dbgAutoSelectBest = true;
 i32 dbgViewerBirdId = 0;
 bool dbgShowObjLines = true;
 bool dbgHightlightBird = true;
@@ -197,6 +211,7 @@ void resetBirds()
     mem_zero(birdAngularVel);
     mem_zero(birdFlapLeftCd);
     mem_zero(birdFlapRightCd);
+    mem_zero(birdBraking);
     mem_zero(birdApplePositionId);
     mem_zero(birdAppleEatenCount);
     mem_zero(birdDead);
@@ -227,11 +242,13 @@ void resetApplePath()
 {
     i32 spawnOriginX = 0;
     i32 spawnOriginY = 0;
-    const i32 spawnRadius = 1500;
+    const i32 spawnRadius = 1200;
 
     for(i32 i = 0; i < APPLE_POS_LIST_COUNT; ++i) {
-        applePosList[i].x = spawnOriginX + spawnRadius * 0.5 + randi64(0, spawnRadius * 0.5);
-        applePosList[i].y = spawnOriginY + spawnRadius * 0.5 + randi64(0, spawnRadius * 0.5);
+        f64 dirX = randi64(0, 1) ? 1.0 : -1.0;
+        f64 dirY = randi64(0, 1) ? 1.0 : -1.0;
+        applePosList[i].x = spawnOriginX + (spawnRadius * 0.5 + randi64(0, spawnRadius * 0.5)) * dirX;
+        applePosList[i].y = spawnOriginY + (spawnRadius * 0.5 + randi64(0, spawnRadius * 0.5)) * dirY;
         if(applePosList[i].y >= GROUND_Y - spawnRadius) {
             applePosList[i].y -= spawnRadius;
         }
@@ -294,8 +311,55 @@ void resetTrees()
     }
 }
 
+void resetClouds()
+{
+    cloud1Count = 0;
+    cloud2Count = 0;
+
+    // setup tree transforms
+    constexpr i32 cloudStartX = CLOUD_MIN_X;
+    constexpr i32 cloudStartY = -15000;
+    constexpr i32 cloudEndX = CLOUD_MAX_X;
+    constexpr i32 cloudEndY = GROUND_Y - 2000;
+
+    for(i32 i = 0; i < CLOUD_COUNT; ++i) {
+        i32 x = randi64(cloudStartX, cloudEndX);
+        i32 y = randi64(cloudStartY, cloudEndY);
+        i32 cloudType = randi64(0, 1);
+
+        switch(cloudType) {
+            case 0: {
+                const f64 scale = randf64(2.0, 10.0);
+                const f32 flip = randi64(0,1) ? 1.f : -1.f;
+                const f32 width = 320 * scale;
+                const f32 height = 160 * scale;
+                Transform& tf = cloud1Tf[cloud1Count++];
+                tf.pos.y = y;
+                tf.pos.x = x;
+                tf.size = { width * flip, height };
+                tf.rot = 0;
+                tf.center = { 0, 0 };
+            } break;
+
+            case 1: {
+                const f64 scale = randf64(2.0, 10.0);
+                const f32 flip = randi64(0,1) ? 1.f : -1.f;
+                const f32 width = 320 * scale;
+                const f32 height = 160 * scale;
+                Transform& tf = cloud2Tf[cloud2Count++];
+                tf.pos.y = y;
+                tf.pos.x = x;
+                tf.size = { width * flip, height };
+                tf.rot = 0;
+                tf.center = { 0, 0 };
+            } break;
+        }
+    }
+}
+
 void resetSimulation()
 {
+    resetClouds();
     resetTrees();
 
     resetBirdColors();
@@ -404,6 +468,10 @@ void handleEvent(const SDL_Event* event)
         if(event->key.keysym.sym == SDLK_n) {
            resetSimulation();
         }
+
+        if(event->key.keysym.sym == SDLK_w) {
+           showUi ^= 1;
+        }
     }
 
     if(event->type == SDL_MOUSEBUTTONDOWN) {
@@ -485,19 +553,9 @@ void ui_birdViewer()
 {
     ImGui::Begin("Bird viewer");
 
-    static bool autoSelectBest = true;
-    ImGui::Checkbox("Auto-select best", &autoSelectBest);
+    ImGui::Checkbox("Auto-select best", &dbgAutoSelectBest);
 
-    if(autoSelectBest) {
-        f64 bestFitness = 0;
-        for(i32 i = 0; i < BIRD_COUNT; ++i) {
-            if(!birdDead[i] && birdFitness[i] > bestFitness) {
-                dbgViewerBirdId = i;
-                bestFitness = birdFitness[i];
-            }
-        }
-    }
-    else {
+    if(!dbgAutoSelectBest) {
         ImGui::PushItemWidth(100);
         ImGui::SliderInt("##bird_id", &dbgViewerBirdId, 0, BIRD_COUNT-1); ImGui::SameLine();
         if(ImGui::Button("Next alive")) {
@@ -534,7 +592,7 @@ void ui_birdViewer()
     ImGui::Text("velY: %g", birdVel[dbgViewerBirdId].y / 1000.0);
     ImGui::Text("appleOffsetX: %g", appleOffsetX / 2000.0);
     ImGui::Text("appleOffsetY: %g", appleOffsetY / 2000.0);
-    ImGui::Text("rot: %g", birdRot[dbgViewerBirdId] / PI);
+    ImGui::Text("rot: %g", birdRot[dbgViewerBirdId] / TAU);
     ImGui::EndGroup();
 
     ImGui::Separator();
@@ -667,6 +725,10 @@ void doUI()
     window.uiNewFrame();
     ImGui::StyleColorsDark();
 
+    if(!showUi) {
+        return;
+    }
+
     ui_simOptions();
     ui_birdViewer();
     ui_generationViewer();
@@ -704,7 +766,7 @@ void updateNNs()
             velY / 1000.0,
             appleOffsetX / 2000.0,
             appleOffsetY / 2000.0,
-            rot / PI,
+            rot / TAU,
             birdFlapLeftCd[i] <= 0.0f ? 1.0 : 0.0
             //diffRot / PI,
             //vec2Len(&diff) / 3000.0
@@ -751,6 +813,7 @@ void updateMechanics()
         birdFlapRightCd[i] -= FRAME_DT;
         if(birdFlapLeftCd[i] <= 0.0f) {
             birdFlapLeftCd[i] = 0.0f;
+            birdBraking[i] = false;
         }
         if(birdFlapRightCd[i] <= 0.0f) {
             birdFlapRightCd[i] = 0.0f;
@@ -932,10 +995,11 @@ void updatePhysics()
                       rotLeft  * -WING_STRENGTH_ANGULAR * FRAME_DT;
 
         if(brake > 0.0) {
-            birdVel[i].x *= 1.0 - WING_BRAKE * brake;
-            birdVel[i].y *= 1.0 - WING_BRAKE * brake;
+            birdVel[i].x *= 1.0 - (WING_BRAKE * brake);
+            birdVel[i].y *= 1.0 - (WING_BRAKE * brake);
             birdFlapLeftCd[i] = WING_FLAP_TIME;
             birdFlapRightCd[i] = WING_FLAP_TIME;
+            birdBraking[i] = true;
         }
         else if(flap > 0.0) {
             Vec2 force = {(f32)(cosf(birdRot[i]) * WING_STRENGTH * FRAME_DT * flap),
@@ -967,7 +1031,7 @@ void updatePhysics()
     }
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         //birdRot[i] += birdAngularVel[i] * FRAME_DT;
-        birdRot[i] = fmod(birdRot[i], PI);
+        birdRot[i] = fmod(birdRot[i], TAU);
     }
 
     // check for ground collision
@@ -1027,6 +1091,16 @@ void nextGeneration()
 
 void newFrame()
 {
+    if(dbgAutoSelectBest) {
+        f64 bestFitness = 0;
+        for(i32 i = 0; i < BIRD_COUNT; ++i) {
+            if(!birdDead[i] && birdFitness[i] > bestFitness) {
+                dbgViewerBirdId = i;
+                bestFitness = birdFitness[i];
+            }
+        }
+    }
+
     doUI();
 
     if(dbgFollowBird) {
@@ -1040,6 +1114,22 @@ void newFrame()
     updatePhysics();
     updateMechanics();
 
+    // update clouds
+    const i32 cloud1Count2 = cloud1Count;
+    const i32 cloud2Count2 = cloud1Count;
+    for(i32 i = 0; i < cloud1Count2; ++i) {
+        cloud1Tf[i].pos.x += 5 * FRAME_DT;
+        if(cloud1Tf[i].pos.x > CLOUD_MAX_X) {
+            cloud1Tf[i].pos.x = CLOUD_MIN_X;
+        }
+    }
+    for(i32 i = 0; i < cloud2Count2; ++i) {
+        cloud2Tf[i].pos.x += 5 * FRAME_DT;
+        if(cloud2Tf[i].pos.x > CLOUD_MAX_X) {
+            cloud2Tf[i].pos.x = CLOUD_MIN_X;
+        }
+    }
+
     // update bird body transform
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         birdBodyTf[i].pos.x = birdPos[i].x;
@@ -1047,21 +1137,31 @@ void newFrame()
         birdBodyTf[i].rot = birdRot[i] + PI * 0.5;
     }
 
-    const f32 wingUpAngle = -PI * 0.1f;
+    const f32 wingUpAngle = -PI * 0.05f;
     const f32 wingDownAngle = PI * 0.6f;
 
     // update bird wing transform
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         birdLeftWingTf[i].pos.x = birdPos[i].x;
         birdLeftWingTf[i].pos.y = birdPos[i].y;
-        birdLeftWingTf[i].rot = birdRot[i] + PI * 0.5 -
-            (wingUpAngle + wingDownAngle) * (birdFlapLeftCd[i] / WING_FLAP_TIME);
+        if(birdBraking[i]) {
+            birdLeftWingTf[i].rot = birdRot[i] + PI * 0.5 - wingUpAngle;
+        }
+        else {
+            birdLeftWingTf[i].rot = birdRot[i] + PI * 0.5 -
+                lerp(wingUpAngle, wingDownAngle, birdFlapLeftCd[i] / WING_FLAP_TIME);
+        }
     }
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         birdRightWingTf[i].pos.x = birdPos[i].x;
         birdRightWingTf[i].pos.y = birdPos[i].y;
-        birdRightWingTf[i].rot = birdRot[i] + PI * 0.5 +
-            (wingUpAngle + wingDownAngle) * (birdFlapRightCd[i] / WING_FLAP_TIME);
+        if(birdBraking[i]) {
+            birdRightWingTf[i].rot = birdRot[i] + PI * 0.5 + wingUpAngle;
+        }
+        else {
+            birdRightWingTf[i].rot = birdRot[i] + PI * 0.5 +
+                lerp(wingUpAngle, wingDownAngle, birdFlapRightCd[i] / WING_FLAP_TIME);
+        }
     }
 
     // update apples position
@@ -1105,7 +1205,7 @@ void render()
     const f32 skyt = viewY;
     const f32 skyb = min(GROUND_Y, viewY + WINDOW_HEIGHT * viewZoom);
     const Color4 skyTopColor = {12, 129, 255, 255};
-    const Color4 skyBotColor = {175, 214, 255, 255};
+    const Color4 skyBotColor = {150, 220, 255, 255};
     Quad skyQuad;
     skyQuad.p[0] = vec2Make(skyl, skyt);
     skyQuad.p[1] = vec2Make(skyr, skyt);
@@ -1116,6 +1216,10 @@ void render()
     skyQuad.c[2] = skyBotColor;
     skyQuad.c[3] = skyBotColor;
     drawQuadBatch(&skyQuad, 1);
+
+    // clouds
+    drawSpriteBatch(tex_cloud1, cloud1Tf, cloud1Count);
+    drawSpriteBatch(tex_cloud2, cloud2Tf, cloud2Count);
 
     // trees
     drawSpriteBatch(tex_tree1, tree1Tf, tree1Count);
@@ -1129,6 +1233,19 @@ void render()
     const Color4 groundColor = {40, 89, 24, 255};
     Quad groundQuad = quadOneColor(gl, gr, gt, gb, groundColor);
     drawQuadBatch(&groundQuad, 1);
+
+#if 0
+    Line dirLine[BIRD_COUNT];
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        Line& l = dirLine[i];
+        Vec2 dir = { cos(birdRot[i]) * 100.0f, sin(birdRot[i]) * 100.0f };
+        l.p1 = birdPos[i];
+        l.p2 = vec2Add(&birdPos[i], &dir);
+        l.c1 = {255, 0, 0, 255};
+        l.c2 = {255, 0, 0, 255};
+    }
+    drawLineBatch(dirLine, BIRD_COUNT);
+#endif
 
     // birds
     const Color3 black = {0, 0, 0};

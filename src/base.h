@@ -105,3 +105,8 @@ inline i64 randi64(i64 min, i64 max)
     u64 r = xorshift64star();
     return min + (r % (max - min + 1));
 }
+
+inline f64 lerp(f64 a, f64 b, f64 ratio)
+{
+    return a * (1.0-ratio) + b * ratio;
+}

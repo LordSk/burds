@@ -382,6 +382,8 @@ bool initSpriteState(i32 winWidth, i32 winHeight)
         return false;
     }
 
+    //glEnable(GL_FRAMEBUFFER_SRGB);
+
     // culling
     //glEnable(GL_CULL_FACE);
     glDisable(GL_CULL_FACE);
