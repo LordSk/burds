@@ -320,20 +320,19 @@ static void sortGenesByHistoricalMarker(Genome* genome)
 
 void neatGenomeAllocMakeNN(Genome** genomes, const i32 count, NeatNN** nn, bool verbose)
 {
-    i64 size = 0;
+    i64 blockSize = 0;
 
     i32 nnSize[2048];
     assert(count <= 2048);
     for(i32 i = 0; i < count; ++i) {
-        nnSize[i] = 0;
-        nnSize[i] += sizeof(NeatNN);
+        nnSize[i] = sizeof(NeatNN);
         nnSize[i] += sizeof(NeatNN::nodeValues[0]) * genomes[i]->totalNodeCount;
         nnSize[i] += sizeof(NeatNN::computations[0]) * genomes[i]->geneCount;
-        size += nnSize[i];
+        blockSize += nnSize[i];
     }
 
-    u8* block = (u8*)malloc(size);
-    memset(block, 0, size);
+    u8* block = (u8*)malloc(blockSize);
+    memset(block, 0, blockSize);
 
     for(i32 i = 0; i < count; ++i) {
         Genome& g = *genomes[i];
@@ -368,7 +367,7 @@ void neatGenomeAllocMakeNN(Genome** genomes, const i32 count, NeatNN** nn, bool 
         }
     }
 
-    if(verbose) LOG("NEAT> allocated %d NeatNN, size=%lld", count, size);
+    if(verbose) LOG("NEAT> allocated %d NeatNN, size=%lld", count, blockSize);
 }
 
 void neatNnPropagate(NeatNN** nn, const i32 nnCount)
@@ -744,6 +743,7 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
                 if(verbose) LOG("NEAT> species %x stagnating (%d)", s, specStagnation[s]);
                 deleteSpecies[s] = true;
                 specStagnation[s] = 0;
+                specStagMaxFitness[s] = 0.0;
             }
         }
         else {

@@ -11,7 +11,7 @@ typedef struct
     Color4 color;
 } VertexColor;
 
-struct
+struct SpriteState
 {
     Mat4 tfMats[BATCH_MAX_COUNT];
     Color3 colors[BATCH_MAX_COUNT];
@@ -25,14 +25,27 @@ struct
     GLuint vboPosColor;
     GLuint vaoLineQuad;
 
-    GLuint programSprite;
-    GLint uViewMatrix;
-    GLint uTexture;
+    // shader sprite color
+    GLuint shSpriteCol_program;
+    GLuint shSpriteCol_vertShader;
+    GLuint shSpriteCol_fragShader;
+    GLint shSpriteCol_uViewMatrix;
+    GLint shSpriteCol_uTexture;
 
-    struct {
-        GLuint program;
-        GLint uViewMatrix;
-    } shaderColor;
+    // shader sprite
+    GLuint shSprite_program;
+    GLuint shSprite_vertShader;
+    GLuint shSprite_fragShader;
+    GLint shSprite_uViewMatrix;
+    GLint shSprite_uTexture;
+
+    // shader plain color
+    GLuint shCol_program;
+    GLint shCol_uViewMatrix;
+
+    bool initSpriteShaders();
+    bool initColorShader();
+
 } state;
 
 enum {
@@ -68,14 +81,32 @@ static GLuint glMakeShader(GLenum type, const char* pFileBuff, i32 fileSize)
     return shader;
 }
 
-i32 initSpriteShader()
+static bool glCheckProgram(GLuint program)
 {
-    glGenBuffers(1, &state.vboQuad);
-    glGenBuffers(1, &state.vboModelMats);
-    glGenBuffers(1, &state.vboColors);
-    glGenVertexArrays(1, &state.vaoSprites);
+    GLint linkResult = GL_FALSE;
+    glGetProgramiv(program, GL_LINK_STATUS, &linkResult);
 
-    glBindVertexArray(state.vaoSprites);
+    if(!linkResult) {
+        int logLength = 0;
+        glGetProgramiv(program, GL_INFO_LOG_LENGTH, &logLength);
+        char* logBuff =  (char*)malloc(logLength);
+        glGetProgramInfoLog(program, logLength, NULL, logBuff);
+        LOG("Error [program link]: %s", logBuff);
+        free(logBuff);
+        glDeleteProgram(program);
+        return false;
+    }
+    return true;
+}
+
+bool SpriteState::initSpriteShaders()
+{
+    glGenBuffers(1, &vboQuad);
+    glGenBuffers(1, &vboModelMats);
+    glGenBuffers(1, &vboColors);
+    glGenVertexArrays(1, &vaoSprites);
+
+    glBindVertexArray(vaoSprites);
 
     const f32 quad[] = {
         0.f, 0.f,   0.f, 0.f,
@@ -87,7 +118,7 @@ i32 initSpriteShader()
         1.f, 0.f,   1.f, 0.f,
     };
 
-    glBindBuffer(GL_ARRAY_BUFFER, state.vboQuad);
+    glBindBuffer(GL_ARRAY_BUFFER, vboQuad);
     glBufferData(GL_ARRAY_BUFFER, 24 * sizeof(f32), quad, GL_STATIC_DRAW);
 
     // vertex position
@@ -112,7 +143,7 @@ i32 initSpriteShader()
     );
     glEnableVertexAttribArray(LAYOUT_UV);
 
-    glBindBuffer(GL_ARRAY_BUFFER, state.vboColors);
+    glBindBuffer(GL_ARRAY_BUFFER, vboColors);
     glBufferData(GL_ARRAY_BUFFER, BATCH_MAX_COUNT * sizeof(Color3), 0, GL_DYNAMIC_DRAW);
 
     // sprite color
@@ -127,7 +158,7 @@ i32 initSpriteShader()
     glEnableVertexAttribArray(LAYOUT_COLOR);
     glVertexAttribDivisor(LAYOUT_COLOR, 1);
 
-    glBindBuffer(GL_ARRAY_BUFFER, state.vboModelMats);
+    glBindBuffer(GL_ARRAY_BUFFER, vboModelMats);
     glBufferData(GL_ARRAY_BUFFER, BATCH_MAX_COUNT * sizeof(Mat4), 0, GL_DYNAMIC_DRAW);
 
     // sprite model matrix
@@ -143,87 +174,115 @@ i32 initSpriteShader()
         glVertexAttribDivisor(LAYOUT_MODEL + i, 1);
     }
 
-    const char* vertexShaderStr = MAKE_STR(
-          #version 330 core\n
-          layout(location = 0) in vec2 position;\n
-          layout(location = 1) in vec2 uv;\n
-          layout(location = 2) in vec3 color;\n
-          layout(location = 3) in mat4 model;\n
-          uniform mat4 uViewMatrix;\n
+    // shader sprite color
+    const char* vertexShaderStr = R"STR(
+        #version 330 core
+        layout(location = 0) in vec2 position;
+        layout(location = 1) in vec2 uv;
+        layout(location = 2) in vec3 color;
+        layout(location = 3) in mat4 model;
+        uniform mat4 uViewMatrix;
 
-          out vec2 vert_uv;
-          out vec3 vert_color;
+        out vec2 vert_uv;
+        out vec3 vert_color;
 
-          void main()\n
-          {\n
-              vert_uv = uv;
-              vert_color = color;
-              gl_Position = uViewMatrix * model * vec4(position, 0.0, 1.0);\n
-          }
-    );
+        void main()
+        {
+          vert_uv = uv;
+          vert_color = color;
+          gl_Position = uViewMatrix * model * vec4(position, 0.0, 1.0);
+        }
+        )STR";
 
-    const char* fragmentShaderStr = MAKE_STR(
-        #version 330 core\n
+    const char* fragmentShaderStr = R"STR(
+        #version 330 core
         uniform sampler2D uTexture;
 
-        in vec2 vert_uv;\n
-        in vec3 vert_color;\n
-        out vec4 fragmentColor;\n
+        in vec2 vert_uv;
+        in vec3 vert_color;
+        out vec4 fragmentColor;
 
-        #define PI (3.14159265359)\n
+        #define PI (3.14159265359)
 
-        void main()\n
-        {\n
+        void main()
+        {
             vec4 tex = texture(uTexture, vert_uv);
-            fragmentColor = vec4(mix(vec3(tex), vert_color, sin(tex.r * PI)), tex.a);\n
+            fragmentColor = vec4(mix(vec3(tex), vert_color, sin(tex.r * PI)), tex.a);
         }
-    );
+        )STR";
 
-    GLuint vertexShader = glMakeShader(GL_VERTEX_SHADER, vertexShaderStr, strlen(vertexShaderStr));
-    GLuint fragmentShader = glMakeShader(GL_FRAGMENT_SHADER, fragmentShaderStr, strlen(fragmentShaderStr));
+    shSpriteCol_vertShader = glMakeShader(GL_VERTEX_SHADER, vertexShaderStr, strlen(vertexShaderStr));
+    shSpriteCol_fragShader = glMakeShader(GL_FRAGMENT_SHADER, fragmentShaderStr, strlen(fragmentShaderStr));
 
-    if(!vertexShader | !fragmentShader) {
-        return FALSE;
+    if(!shSpriteCol_vertShader | !shSpriteCol_fragShader) {
+        return false;
     }
 
-    state.programSprite = glCreateProgram();
-    glAttachShader(state.programSprite, vertexShader);
-    glAttachShader(state.programSprite, fragmentShader);
-    glLinkProgram(state.programSprite);
+    shSpriteCol_program = glCreateProgram();
+    glAttachShader(shSpriteCol_program, shSpriteCol_vertShader);
+    glAttachShader(shSpriteCol_program, shSpriteCol_fragShader);
+    glLinkProgram(shSpriteCol_program);
 
-    // check
-    GLint linkResult = GL_FALSE;
-    glGetProgramiv(state.programSprite, GL_LINK_STATUS, &linkResult);
-
-    if(!linkResult) {
-        int logLength = 0;
-        glGetProgramiv(state.programSprite, GL_INFO_LOG_LENGTH, &logLength);
-        char* logBuff =  (char*)malloc(logLength);
-        glGetProgramInfoLog(state.programSprite, logLength, NULL, logBuff);
-        LOG("Error [program link]: %s", logBuff);
-        free(logBuff);
-        glDeleteProgram(state.programSprite);
-        return FALSE;
+    if(!glCheckProgram(shSpriteCol_program)) {
+        return false;
     }
 
-    state.uViewMatrix = glGetUniformLocation(state.programSprite, "uViewMatrix");
-    state.uTexture = glGetUniformLocation(state.programSprite, "uTexture");
+    shSpriteCol_uViewMatrix = glGetUniformLocation(shSpriteCol_program, "uViewMatrix");
+    shSpriteCol_uTexture = glGetUniformLocation(shSpriteCol_program, "uTexture");
 
-    if(state.uViewMatrix == -1 || state.uTexture == -1) {
-        return FALSE;
+    if(shSpriteCol_uViewMatrix == -1 || shSpriteCol_uTexture == -1) {
+        return false;
     }
 
-    return TRUE;
+    // shader sprite
+    const char* fragmentShaderSimpleStr = R"STR(
+        #version 330 core
+        uniform sampler2D uTexture;
+
+        in vec2 vert_uv;
+        out vec4 fragmentColor;
+
+        void main()
+        {
+            fragmentColor = texture(uTexture, vert_uv);
+        }
+        )STR";
+
+    shSprite_vertShader = shSpriteCol_vertShader; // same vertex shader
+    shSprite_fragShader = glMakeShader(GL_FRAGMENT_SHADER, fragmentShaderSimpleStr,
+                                          strlen(fragmentShaderSimpleStr));
+
+    if(!shSprite_fragShader) {
+        return false;
+    }
+
+    shSprite_program = glCreateProgram();
+    glAttachShader(shSprite_program, shSprite_vertShader);
+    glAttachShader(shSprite_program, shSprite_fragShader);
+    glLinkProgram(shSprite_program);
+
+    if(!glCheckProgram(shSprite_program)) {
+        return false;
+    }
+
+    shSprite_uViewMatrix = glGetUniformLocation(shSprite_program, "uViewMatrix");
+    shSprite_uTexture = glGetUniformLocation(shSprite_program, "uTexture");
+
+    if(shSprite_uViewMatrix == -1 || shSprite_uTexture == -1) {
+        return false;
+    }
+
+    return true;
 }
 
-i32 initColorShader()
+bool SpriteState::initColorShader()
 {
-    glGenBuffers(1, &state.vboPosColor);
-    glGenVertexArrays(1, &state.vaoLineQuad);
+    glGenBuffers(1, &vboPosColor);
+    glGenVertexArrays(1, &vaoLineQuad);
 
-    glBindVertexArray(state.vaoLineQuad);
+    glBindVertexArray(vaoLineQuad);
 
-    glBindBuffer(GL_ARRAY_BUFFER, state.vboPosColor);
+    glBindBuffer(GL_ARRAY_BUFFER, vboPosColor);
     glBufferData(GL_ARRAY_BUFFER, BATCH_MAX_COUNT * sizeof(VertexColor) * 6, 0, GL_DYNAMIC_DRAW);
 
     // vertex position
@@ -248,79 +307,79 @@ i32 initColorShader()
     );
     glEnableVertexAttribArray(LAYOUT_COLOR);
 
-    const char* vertexShaderStr = MAKE_STR(
-          #version 330 core\n
-          layout(location = 0) in vec2 position;\n
-          layout(location = 2) in vec4 color;\n
-          uniform mat4 uViewMatrix;\n
+    const char* vertexShaderStr = R"STR(
+        #version 330 core
+        layout(location = 0) in vec2 position;
+        layout(location = 2) in vec4 color;
+        uniform mat4 uViewMatrix;
 
-          out vec4 vert_color;
+        out vec4 vert_color;
 
-          void main()\n
-          {\n
-              vert_color = color;
-              gl_Position = uViewMatrix * vec4(position, 0.0, 1.0);\n
-          }
-    );
-
-    const char* fragmentShaderStr = MAKE_STR(
-        #version 330 core\n
-
-        in vec4 vert_color;\n
-        out vec4 fragmentColor;\n
-
-        void main()\n
-        {\n
-            fragmentColor = vert_color;\n
+        void main()
+        {
+            vert_color = color;
+            gl_Position = uViewMatrix * vec4(position, 0.0, 1.0);
         }
-    );
+        )STR";
+
+    const char* fragmentShaderStr = R"STR(
+        #version 330 core
+
+        in vec4 vert_color;
+        out vec4 fragmentColor;
+
+        void main()
+        {
+            fragmentColor = vert_color;
+        }
+        )STR";
 
     GLuint vertexShader = glMakeShader(GL_VERTEX_SHADER, vertexShaderStr, strlen(vertexShaderStr));
     GLuint fragmentShader = glMakeShader(GL_FRAGMENT_SHADER, fragmentShaderStr, strlen(fragmentShaderStr));
 
     if(!vertexShader | !fragmentShader) {
-        return FALSE;
+        return false;
     }
 
-    state.shaderColor.program = glCreateProgram();
-    glAttachShader(state.shaderColor.program, vertexShader);
-    glAttachShader(state.shaderColor.program, fragmentShader);
-    glLinkProgram(state.shaderColor.program);
+    shCol_program = glCreateProgram();
+    glAttachShader(shCol_program, vertexShader);
+    glAttachShader(shCol_program, fragmentShader);
+    glLinkProgram(shCol_program);
 
     // check
     GLint linkResult = GL_FALSE;
-    glGetProgramiv(state.shaderColor.program, GL_LINK_STATUS, &linkResult);
+    glGetProgramiv(shCol_program, GL_LINK_STATUS, &linkResult);
 
     if(!linkResult) {
         int logLength = 0;
-        glGetProgramiv(state.shaderColor.program, GL_INFO_LOG_LENGTH, &logLength);
+        glGetProgramiv(shCol_program, GL_INFO_LOG_LENGTH, &logLength);
         char* logBuff =  (char*)malloc(logLength);
-        glGetProgramInfoLog(state.shaderColor.program, logLength, NULL, logBuff);
+        glGetProgramInfoLog(shCol_program, logLength, NULL, logBuff);
         LOG("Error [program link]: %s", logBuff);
         free(logBuff);
-        glDeleteProgram(state.shaderColor.program);
-        return FALSE;
+        glDeleteProgram(shCol_program);
+        return false;
     }
 
-    state.shaderColor.uViewMatrix = glGetUniformLocation(state.shaderColor.program, "uViewMatrix");
+    shCol_uViewMatrix = glGetUniformLocation(shCol_program, "uViewMatrix");
 
-    if(state.shaderColor.uViewMatrix == -1) {
-        return FALSE;
+    if(shCol_uViewMatrix == -1) {
+        return false;
     }
 
-    return TRUE;
+    return true;
 }
 
-i32 initSpriteState(i32 winWidth, i32 winHeight)
+bool initSpriteState(i32 winWidth, i32 winHeight)
 {
-    if(!initSpriteShader()) {
+    if(!state.initSpriteShaders()) {
         LOG("ERROR: could init sprite shader correctly");
-        return FALSE;
+        return false;
     }
 
-    if(!initColorShader()) {
+    if(!state.initColorShader()) {
         LOG("ERROR: could init line shader correctly");
-        return FALSE;
+        return false;
     }
 
     // culling
@@ -334,7 +393,7 @@ i32 initSpriteState(i32 winWidth, i32 winHeight)
 
     glViewport(0, 0, winWidth, winHeight);
 
-    return TRUE;
+    return true;
 }
 
 void setView(i32 x, i32 y, i32 width, i32 height)
@@ -344,11 +403,14 @@ void setView(i32 x, i32 y, i32 width, i32 height)
     Mat4 tr = mat4Translate(&v);
     Mat4 view = mat4Mul(&ortho, &tr);
 
-    glUseProgram(state.programSprite);
-    glUniformMatrix4fv(state.uViewMatrix, 1, GL_FALSE, view.md);
+    glUseProgram(state.shSpriteCol_program);
+    glUniformMatrix4fv(state.shSpriteCol_uViewMatrix, 1, GL_FALSE, view.md);
 
-    glUseProgram(state.shaderColor.program);
-    glUniformMatrix4fv(state.shaderColor.uViewMatrix, 1, GL_FALSE, view.md);
+    glUseProgram(state.shSprite_program);
+    glUniformMatrix4fv(state.shSprite_uViewMatrix, 1, GL_FALSE, view.md);
+
+    glUseProgram(state.shCol_program);
+    glUniformMatrix4fv(state.shCol_uViewMatrix, 1, GL_FALSE, view.md);
 }
 
 i32 loadTexture(const char* path)
@@ -384,7 +446,7 @@ i32 loadTexture(const char* path)
     return texture;
 }
 
-void drawSpriteBatch(i32 textureId, const Transform* transform, const Color3* color, const i32 count)
+void drawSpriteColorBatch(i32 textureId, const Transform* transform, const Color3* color, const i32 count)
 {
     for(i32 i = 0; i < count; ++i) {
         Mat4 tr = mat4Translate(&transform[i].pos);
@@ -408,8 +470,35 @@ void drawSpriteBatch(i32 textureId, const Transform* transform, const Color3* co
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, textureId);
 
-    glUseProgram(state.programSprite);
-    glUniform1i(state.uTexture, 1);
+    glUseProgram(state.shSpriteCol_program);
+    glUniform1i(state.shSpriteCol_uTexture, 1);
+
+    glDrawArraysInstanced(GL_TRIANGLES, 0, 6, count);
+}
+
+void drawSpriteBatch(i32 textureId, const Transform* transform, const i32 count)
+{
+    for(i32 i = 0; i < count; ++i) {
+        Mat4 tr = mat4Translate(&transform[i].pos);
+        Vec2 center = {-transform[i].center.x, -transform[i].center.y};
+        Mat4 cent = mat4Translate(&center);
+        Mat4 rot = mat4Rotate(-transform[i].rot);
+        Mat4 sc = mat4Scale(&transform[i].size);
+        Mat4 trrot = mat4Mul(&tr, &rot);
+        trrot = mat4Mul(&trrot, &cent);
+        state.tfMats[i] = mat4Mul(&trrot, &sc);
+    }
+
+    glBindBuffer(GL_ARRAY_BUFFER, state.vboModelMats);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, count * sizeof(Mat4), state.tfMats);
+
+    glBindVertexArray(state.vaoSprites);
+
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, textureId);
+
+    glUseProgram(state.shSprite_program);
+    glUniform1i(state.shSprite_uTexture, 1);
 
     glDrawArraysInstanced(GL_TRIANGLES, 0, 6, count);
 }
@@ -421,7 +510,7 @@ void drawLineBatch(const Line* lines, const i32 count, f32 lineThickness)
 
     glBindVertexArray(state.vaoLineQuad);
 
-    glUseProgram(state.shaderColor.program);
+    glUseProgram(state.shCol_program);
 
     glLineWidth(lineThickness);
 
@@ -455,7 +544,7 @@ void drawQuadBatch(const Quad* quads, const i32 count)
 
     glBindVertexArray(state.vaoLineQuad);
 
-    glUseProgram(state.shaderColor.program);
+    glUseProgram(state.shCol_program);
 
     glDrawArrays(GL_TRIANGLES, 0, count * 6);
 }

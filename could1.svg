@@ -14,8 +14,11 @@
    viewBox="0 0 270.93333 135.46666"
    version="1.1"
    id="svg4490"
-   inkscape:version="0.92.1 r15371"
-   sodipodi:docname="could1.svg">
+   inkscape:version="0.92.2 (5c3e80d, 2017-08-06)"
+   sodipodi:docname="could1.svg"
+   inkscape:export-filename="C:\Prog\Projets\burds\cloud1.png"
+   inkscape:export-xdpi="30.000002"
+   inkscape:export-ydpi="30.000002">
   <defs
      id="defs4484" />
   <sodipodi:namedview
@@ -26,8 +29,8 @@
      inkscape:pageopacity="0"
      inkscape:pageshadow="2"
      inkscape:zoom="0.7"
-     inkscape:cx="351.5967"
-     inkscape:cy="294.64351"
+     inkscape:cx="-9.3033271"
+     inkscape:cy="358.7003"
      inkscape:document-units="mm"
      inkscape:current-layer="layer1"
      showgrid="false"
@@ -45,7 +48,7 @@
         <dc:format>image/svg+xml</dc:format>
         <dc:type
            rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
-        <dc:title></dc:title>
+        <dc:title />
       </cc:Work>
     </rdf:RDF>
   </metadata>

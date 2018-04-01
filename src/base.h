@@ -18,7 +18,6 @@ typedef double f64;
 #define LOG(fmt, ...) (printf(fmt "\n", __VA_ARGS__), fflush(stdout))
 #define TIME_MILLI() (clock() / (CLOCKS_PER_SEC / 1000))
 #define TIME_MICRO() (clock() / CLOCKS_PER_SEC)
-#define MAKE_STR(s) #s
 #define arr_count(arr) (sizeof(arr)/sizeof(arr[0]))
 #define stack_arr(type, count) ((type*)alloca(sizeof(type) * count))
 #define arr_zero(arr, count) (memset(arr, 0, sizeof(arr[0]) * count))
@@ -54,8 +53,10 @@ i64 timeGetMicro();
 // RANDOM
 extern u64 g_RandSeed;
 
+#ifdef RAND_USE_STD
 static std::random_device g_randomDevice;
 static std::mt19937 g_randomMt(g_randomDevice());
+#endif
 
 inline void randSetSeed(u64 seed)
 {
@@ -89,10 +90,13 @@ inline T clamp(T val, T vmin, T vmax)
 
 inline f64 randf64(f64 vmin, f64 vmax)
 {
+#ifdef RAND_USE_STD
     std::uniform_real_distribution<f64> dis(vmin, vmax);
     return dis(g_randomMt);
-    /*u64 r = xorshift64star();
-    return vmin + ((f64)r/(f64)U64_MAX) * (vmax - vmin);*/
+#else
+    u64 r = xorshift64star();
+    return vmin + ((f64)r/(f64)U64_MAX) * (vmax - vmin);
+#endif
 }
 
 

@@ -60,9 +60,10 @@ inline Quad quadOneColor(f32 left, f32 right, f32 top, f32 bottom, Color4 color)
     return q;
 }
 
-i32 initSpriteState(i32 winWidth, i32 winHeight);
+bool initSpriteState(i32 winWidth, i32 winHeight);
 i32 loadTexture(const char* path);
 void setView(i32 x, i32 y, i32 width, i32 height);
-void drawSpriteBatch(i32 textureId, const Transform* transform, const Color3* color, const i32 count);
+void drawSpriteColorBatch(i32 textureId, const Transform* transform, const Color3* color, const i32 count);
+void drawSpriteBatch(i32 textureId, const Transform* transform, const i32 count);
 void drawLineBatch(const Line* lines, const i32 count, f32 lineThickness = 1.0f);
 void drawQuadBatch(const Quad* quads, const i32 count);

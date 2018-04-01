@@ -37,7 +37,7 @@ constexpr i32 SUBPOP_MAX_COUNT = BIRD_COUNT;
 #define FRICTION_AIR 0.05f
 
 #define WING_STRENGTH 20000.f
-#define WING_BRAKE 0.2
+#define WING_BRAKE 0.5
 #define WING_STRENGTH_ANGULAR (PI * 10.0)
 
 #define ANGULAR_VELOCITY_MAX (TAU * 2.0)
@@ -48,13 +48,9 @@ constexpr i32 SUBPOP_MAX_COUNT = BIRD_COUNT;
 
 #define GROUND_Y 1000
 
-#define REINSERT_TRUNCATE 0x1
-#define REINSERT_DUPLICATE 0x2
-#define REINSERT_STRATEGY REINSERT_TRUNCATE
-
-#define NEURAL_NET_LAYERS { 4, 12, 4 }
-
 #define STATS_HISTORY_COUNT 30
+
+#define TREE_COUNT 10
 
 struct BirdInput
 {
@@ -77,6 +73,15 @@ AppWindow window;
 i32 tex_birdBody;
 i32 tex_birdWing;
 i32 tex_apple;
+i32 tex_tree1;
+i32 tex_tree2;
+i32 tex_cloud1;
+i32 tex_cloud2;
+
+Transform tree1Tf[TREE_COUNT];
+Transform tree2Tf[TREE_COUNT];
+i32 tree1Count;
+i32 tree2Count;
 
 Transform birdBodyTf[BIRD_COUNT];
 Transform birdLeftWingTf[BIRD_COUNT];
@@ -225,10 +230,10 @@ void resetApplePath()
     const i32 spawnRadius = 1500;
 
     for(i32 i = 0; i < APPLE_POS_LIST_COUNT; ++i) {
-        applePosList[i].x = spawnOriginX - spawnRadius + randi64(0, spawnRadius* 2);
-        applePosList[i].y = spawnOriginY - spawnRadius + randi64(0, spawnRadius* 2);
-        if(applePosList[i].y >= GROUND_Y - (spawnRadius / 2)) {
-            applePosList[i].y = spawnOriginY - spawnRadius;
+        applePosList[i].x = spawnOriginX + spawnRadius * 0.5 + randi64(0, spawnRadius * 0.5);
+        applePosList[i].y = spawnOriginY + spawnRadius * 0.5 + randi64(0, spawnRadius * 0.5);
+        if(applePosList[i].y >= GROUND_Y - spawnRadius) {
+            applePosList[i].y -= spawnRadius;
         }
         spawnOriginX = applePosList[i].x;
         spawnOriginY = applePosList[i].y;
@@ -242,8 +247,57 @@ void resetView()
     viewZoom = 3.f;
 }
 
+void resetTrees()
+{
+    tree1Count = 0;
+    tree2Count = 0;
+
+    // setup tree transforms
+    constexpr i32 treeStartX = -10000;
+    constexpr i32 treeSpacingMin = 100;
+    constexpr i32 treeSpacingMax = 800;
+    i32 treeOffX = 0;
+
+    for(i32 i = 0; i < TREE_COUNT; ++i) {
+        treeOffX += randi64(treeSpacingMin, treeSpacingMax);
+        i32 treeType = randi64(0, 1);
+
+        switch(treeType) {
+            case 0: {
+                const f64 scale = randf64(5.0, 6.0);
+                const f32 flip = randi64(0,1) ? 1.f : -1.f;
+                const f32 tree1Width = 512 * scale;
+                const f32 tree2Height = 338 * scale;
+                Transform& tf = tree1Tf[tree1Count++];
+                tf.pos.y = GROUND_Y - tree2Height + 10;
+                tf.pos.x = treeStartX + treeOffX;
+                treeOffX += tree1Width;
+                tf.size = { tree1Width * flip, tree2Height };
+                tf.rot = 0;
+                tf.center = { 0, 0 };
+            } break;
+
+            case 1: {
+                const f64 scale = randf64(3.0, 4.0);
+                const f32 flip = randi64(0,1) ? 1.f : -1.f;
+                const f32 tree2Width = 424 * scale;
+                const f32 tree2Height = 424 * scale;
+                Transform& tf = tree2Tf[tree2Count++];
+                tf.pos.y = GROUND_Y - tree2Height + 20;
+                tf.pos.x = treeStartX + treeOffX;
+                treeOffX += tree2Width;
+                tf.size = { tree2Width * flip, tree2Height };
+                tf.rot = 0;
+                tf.center = { 0, 0 };
+            } break;
+        }
+    }
+}
+
 void resetSimulation()
 {
+    resetTrees();
+
     resetBirdColors();
     resetBirds();
     resetApplePath();
@@ -273,12 +327,23 @@ bool init()
     viewY = -1000;
     viewZoom = 3.f;
 
+    // load textures
     tex_birdBody = loadTexture("../bird_body.png");
     tex_birdWing = loadTexture("../wing.png");
     tex_apple    = loadTexture("../apple.png");
+    tex_tree1    = loadTexture("../tree_1.png");
+    tex_tree2    = loadTexture("../tree_2.png");
+    tex_cloud1   = loadTexture("../cloud1.png");
+    tex_cloud2   = loadTexture("../cloud2.png");
+
     if(tex_birdBody == -1 ||
        tex_birdWing == -1 ||
-       tex_apple    == -1) {
+       tex_apple    == -1 ||
+       tex_tree1    == -1 ||
+       tex_tree2    == -1 ||
+       tex_cloud1   == -1 ||
+       tex_cloud2   == -1
+       ) {
         return false;
     }
 
@@ -867,9 +932,8 @@ void updatePhysics()
                       rotLeft  * -WING_STRENGTH_ANGULAR * FRAME_DT;
 
         if(brake > 0.0) {
-            birdRot[i] = brake * TAU;
-            birdVel[i].x *= 1.0 - WING_BRAKE;
-            birdVel[i].y *= 1.0 - WING_BRAKE;
+            birdVel[i].x *= 1.0 - WING_BRAKE * brake;
+            birdVel[i].y *= 1.0 - WING_BRAKE * brake;
             birdFlapLeftCd[i] = WING_FLAP_TIME;
             birdFlapRightCd[i] = WING_FLAP_TIME;
         }
@@ -1010,10 +1074,7 @@ void newFrame()
         targetLine[i].p1 = birdPos[i];
         targetLine[i].p2 = appleTf[i].pos;
     }
-}
 
-void render()
-{
     const Color3 black = {0, 0, 0};
     const Color4 black4 = {0, 0, 0, 0};
     Color3 birdColor[BIRD_COUNT];
@@ -1032,28 +1093,66 @@ void render()
             targetLine[i].c2 = {birdColor[i].r, birdColor[i].g, birdColor[i].b, 0};
         }
     }
+}
 
+void render()
+{
     glClear(GL_COLOR_BUFFER_BIT);
 
-    const f32 gl = -10000000.f;
-    const f32 gr = 10000000.f;
+    // sky
+    const f32 skyl = viewX;
+    const f32 skyr = viewX + WINDOW_WIDTH * viewZoom;
+    const f32 skyt = viewY;
+    const f32 skyb = min(GROUND_Y, viewY + WINDOW_HEIGHT * viewZoom);
+    const Color4 skyTopColor = {12, 129, 255, 255};
+    const Color4 skyBotColor = {175, 214, 255, 255};
+    Quad skyQuad;
+    skyQuad.p[0] = vec2Make(skyl, skyt);
+    skyQuad.p[1] = vec2Make(skyr, skyt);
+    skyQuad.p[2] = vec2Make(skyl, skyb);
+    skyQuad.p[3] = vec2Make(skyr, skyb);
+    skyQuad.c[0] = skyTopColor;
+    skyQuad.c[1] = skyTopColor;
+    skyQuad.c[2] = skyBotColor;
+    skyQuad.c[3] = skyBotColor;
+    drawQuadBatch(&skyQuad, 1);
+
+    // trees
+    drawSpriteBatch(tex_tree1, tree1Tf, tree1Count);
+    drawSpriteBatch(tex_tree2, tree2Tf, tree2Count);
+
+    // ground
+    const f32 gl = viewX;
+    const f32 gr = viewX + WINDOW_WIDTH * viewZoom;
     const f32 gt = GROUND_Y;
-    const f32 gb = GROUND_Y + 10000.f;
+    const f32 gb = max(GROUND_Y, viewY + WINDOW_HEIGHT * viewZoom);
     const Color4 groundColor = {40, 89, 24, 255};
-
     Quad groundQuad = quadOneColor(gl, gr, gt, gb, groundColor);
-
     drawQuadBatch(&groundQuad, 1);
+
+    // birds
+    const Color3 black = {0, 0, 0};
+    Color3 birdColor[BIRD_COUNT];
+    for(i32 i = 0; i < BIRD_COUNT; ++i) {
+        if(birdDead[i]) {
+            birdColor[i] = black;
+        }
+        else {
+            i32 species = birdCurGen[i]->species;
+            if(species < 0) species = 0;
+            birdColor[i] = speciesColor[species];
+        }
+    }
 
     if(dbgShowObjLines) {
         drawLineBatch(targetLine, BIRD_COUNT);
     }
 
-    drawSpriteBatch(tex_birdWing, birdLeftWingTf, birdColor, BIRD_COUNT);
-    drawSpriteBatch(tex_birdWing, birdRightWingTf, birdColor, BIRD_COUNT);
-    drawSpriteBatch(tex_birdBody, birdBodyTf, birdColor, BIRD_COUNT);
+    drawSpriteColorBatch(tex_birdWing, birdLeftWingTf, birdColor, BIRD_COUNT);
+    drawSpriteColorBatch(tex_birdWing, birdRightWingTf, birdColor, BIRD_COUNT);
+    drawSpriteColorBatch(tex_birdBody, birdBodyTf, birdColor, BIRD_COUNT);
 
-    drawSpriteBatch(tex_apple, appleTf, birdColor, BIRD_COUNT);
+    drawSpriteColorBatch(tex_apple, appleTf, birdColor, BIRD_COUNT);
 
     /*Transform pr;
     pr.pos.x = birdPos[0].x + cosf(birdRot[0] -PI * 0.5f +PI * 0.15f) * 40.f;
