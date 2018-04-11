@@ -76,7 +76,7 @@ void ImGui_NeatNN(const Genome* genome)
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     const Genome& g = *genome;
     const ImVec2 nodeSpace(30, 30);
-    const f32 linkSpaceWidth = 60.f;
+    const f32 linkSpaceWidth = 30.f;
     const f32 nodeRadius = 12.f;
 
     i32 maxLayer = 0;

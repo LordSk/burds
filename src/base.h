@@ -41,6 +41,8 @@ typedef double f64;
     #define min(a,b) (((a) < (b)) ? (a) : (b))
 #endif
 
+#define RAND_USE_STD
+
 
 // TIME
 typedef i64 timept;
@@ -100,10 +102,15 @@ inline f64 randf64(f64 vmin, f64 vmax)
 }
 
 
-inline i64 randi64(i64 min, i64 max)
+inline i64 randi64(i64 vmin, i64 vmax)
 {
+#ifdef RAND_USE_STD
+    std::uniform_int_distribution<i64> dis(vmin, vmax);
+    return dis(g_randomMt);
+#else
     u64 r = xorshift64star();
     return min + (r % (max - min + 1));
+#endif
 }
 
 inline f64 lerp(f64 a, f64 b, f64 ratio)

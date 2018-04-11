@@ -38,7 +38,7 @@ constexpr i32 SUBPOP_MAX_COUNT = BIRD_COUNT;
 
 #define WING_STRENGTH 20000.f
 #define WING_BRAKE 0.5
-#define WING_STRENGTH_ANGULAR (PI * 5.0)
+#define WING_STRENGTH_ANGULAR (PI * 10.0)
 
 #define ANGULAR_VELOCITY_MAX (TAU * 2.0)
 
@@ -57,16 +57,7 @@ constexpr i32 SUBPOP_MAX_COUNT = BIRD_COUNT;
 
 struct BirdInput
 {
-    u8 left, right, flap, flapHard, brake, brakeHard;
-};
-
-enum {
-    MODE_NN_TRAIN=0,
-    MODE_HUMAN_PLAY
-};
-
-struct Bounds {
-    f64 bmin, bmax;
+    u8 left, right, flap, brake;
 };
 
 struct App {
@@ -146,7 +137,7 @@ bool dbgHightlightBird = true;
 bool dbgFollowBird = false;
 
 struct GenerationStats {
-    i32 number = 0;
+    i32 number = 1;
     f64 maxFitness = 0.0;
     f64 avgFitness = 0.0;
 };
@@ -242,7 +233,7 @@ void resetApplePath()
 {
     i32 spawnOriginX = 0;
     i32 spawnOriginY = 0;
-    const i32 spawnRadius = 1200;
+    const i32 spawnRadius = 1000;
 
     for(i32 i = 0; i < APPLE_POS_LIST_COUNT; ++i) {
         f64 dirX = randi64(0, 1) ? 1.0 : -1.0;
@@ -366,7 +357,7 @@ void resetSimulation()
     resetBirds();
     resetApplePath();
 
-    generationNumber = 0;
+    generationNumber = 1;
     curGenStats = {};
     lastGenStats = {};
     mem_zero(pastGenStats);
@@ -1116,7 +1107,7 @@ void newFrame()
 
     // update clouds
     const i32 cloud1Count2 = cloud1Count;
-    const i32 cloud2Count2 = cloud1Count;
+    const i32 cloud2Count2 = cloud2Count;
     for(i32 i = 0; i < cloud1Count2; ++i) {
         cloud1Tf[i].pos.x += 5 * FRAME_DT;
         if(cloud1Tf[i].pos.x > CLOUD_MAX_X) {

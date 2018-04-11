@@ -114,8 +114,20 @@ project "frogs_app"
 	files {
 		"src/*.h",
 		"src/*.cpp",
-		"src/frogs/*.h",
-		"src/frogs/*.cpp",
+		"src/frogs/frogs_app.cpp",
+		"src/imgui/*.h",
+		"src/imgui/*.cpp",
+	}
+	
+project "frogs_neat"
+	kind "WindowedApp"
+
+	configuration {}
+	
+	files {
+		"src/*.h",
+		"src/*.cpp",
+		"src/frogs/frogs_neat.cpp",
 		"src/imgui/*.h",
 		"src/imgui/*.cpp",
 	}
