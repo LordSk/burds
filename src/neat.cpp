@@ -729,7 +729,6 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
 
     // species stagnation
     u8* deleteSpecies = stack_arr(u8,speciesCount);
-#if 1
     const i32 stagnationT = params.speciesStagnationMax;
     u16* specStagnation = neatSpec->stagnation;
     f64* specStagMaxFitness = neatSpec->maxFitness;
@@ -751,7 +750,6 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
             specStagnation[s] = 0;
         }
     }
-#endif
 
     // keep best species always
     f64 bestMaxFitness = 0.0;

@@ -10,10 +10,17 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "imgui/imgui_internal.h"
 
+RnnSpeciation::~RnnSpeciation()
+{
+    if(speciesRep) {
+        rnnDealloc(speciesRep);
+    }
+}
+
 #define sigmoid(val) (1.0 / (1.0 + expf(-val)))
 //#define hidden_activate(val) min(max(0, val), 10.0)
-#define hidden_activate(val) tanh(val)
-#define output_activate(val) ((tanh(val) + 1.0) * 0.5)
+#define hidden_activate(val) tanh(clamp(val, -10.0, 10.0))
+#define output_activate(val) tanh(clamp(val, -10.0, 10.0))
 //#define activate(val) min(max(0, val), 10.0)
 //#define output_activate(val, outputCount) ((tanhf(val) + 1.0) * 0.5)
 #define pow2(val) (val * val)
@@ -222,39 +229,39 @@ void rnnMakeDef(RecurrentNeuralNetDef* def, const i32 layerCount, const i32 laye
     def->bias = bias;
 }
 
-void rnnAlloc(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef* def)
+void rnnAlloc(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef& def)
 {
-    i32 dataSize = nnCount * def->neuralNetSize;
+    i32 dataSize = nnCount * def.neuralNetSize;
     u8* data = (u8*)_aligned_malloc(dataSize, alignof(RecurrentNeuralNet));
 
     for(i32 i = 0; i < nnCount; ++i) {
-        nn[i] = (RecurrentNeuralNet*)(data + def->neuralNetSize * i);
+        nn[i] = (RecurrentNeuralNet*)(data + def.neuralNetSize * i);
 #ifdef CONF_DEBUG
-        memset(nn[i], 0xAB+i, def->neuralNetSize);
+        memset(nn[i], 0xAB+i, def.neuralNetSize);
 #endif
         nn[i]->values = (f64*)(nn[i] + 1);
         assert((intptr_t)nn[i]->values - (intptr_t)nn[i] == sizeof(RecurrentNeuralNet));
-        nn[i]->weights = nn[i]->values + def->neuronCount;
-        nn[i]->prevHiddenValues = nn[i]->values + def->neuronCount - def->hiddenStateNeuronCount;
-        nn[i]->prevHiddenWeights = nn[i]->weights + def->weightTotalCount - def->hiddenStateWeightCount;
-        nn[i]->output = nn[i]->prevHiddenValues - def->outputNeuronCount;
+        nn[i]->weights = nn[i]->values + def.neuronCount;
+        nn[i]->prevHiddenValues = nn[i]->values + def.neuronCount - def.hiddenStateNeuronCount;
+        nn[i]->prevHiddenWeights = nn[i]->weights + def.weightTotalCount - def.hiddenStateWeightCount;
+        nn[i]->output = nn[i]->prevHiddenValues - def.outputNeuronCount;
     }
 
-    LOG("allocated %d RNN (layers=%d nnSize=%d totalDataSize=%d)", nnCount, def->layerCount,
-        def->neuralNetSize, dataSize);
+    LOG("allocated %d RNN (layers=%d nnSize=%d totalDataSize=%d)", nnCount, def.layerCount,
+        def.neuralNetSize, dataSize);
 }
 
 
-void rnnDealloc(void* ptr)
+void rnnDealloc(RecurrentNeuralNet** nn)
 {
-    _aligned_free(ptr);
+    _aligned_free(nn[0]);
 }
 
 
-void rnnCopy(RecurrentNeuralNet* dest, RecurrentNeuralNet* src, RecurrentNeuralNetDef* def)
+void rnnCopy(RecurrentNeuralNet* dest, RecurrentNeuralNet* src, const RecurrentNeuralNetDef& def)
 {
-    const i32 weightTotalCount = def->weightTotalCount;
-    const i32 neuronCount = def->neuronCount;
+    const i32 weightTotalCount = def.weightTotalCount;
+    const i32 neuronCount = def.neuronCount;
 
     for(i32 i = 0; i < weightTotalCount; ++i) {
         dest->weights[i] = src->weights[i];
@@ -264,14 +271,74 @@ void rnnCopy(RecurrentNeuralNet* dest, RecurrentNeuralNet* src, RecurrentNeuralN
     }
 }
 
-void rnnInitRandom(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef* def)
+static f64 compatibilityDistance(const f64* weightA, const f64* weightB, const i32 weightCount)
 {
-    for(i32 i = 0; i < nnCount; ++i) {
-        memset(nn[i]->values, 0, sizeof(nn[i]->values[0]) * def->neuronCount);
-        for(i32 s = 0; s < def->weightTotalCount; ++s) {
+    f64 totalWeightDiff = 0.0;
+    for(i32 i = 0; i < weightCount; ++i) {
+        totalWeightDiff += fabs(weightA[i] - weightB[i]);
+    }
+
+    f64 avgWeightDiff = totalWeightDiff / weightCount;
+    return avgWeightDiff;
+}
+
+void rnnInit(RecurrentNeuralNet** nn, const i32 popCount, const RecurrentNeuralNetDef& def)
+{
+    const i32 weightTotalCount = def.weightTotalCount;
+    const i32 neuronCount = def.neuronCount;
+    for(i32 i = 0; i < popCount; ++i) {
+        memset(nn[i]->values, 0, sizeof(nn[i]->values[0]) * neuronCount);
+        for(i32 s = 0; s < weightTotalCount; ++s) {
             nn[i]->weights[s] = randf64(-1.0, 1.0);
         }
     }
+}
+
+void rnnSpeciationInit(RnnSpeciation* speciation, i32* species, RecurrentNeuralNet** nn,
+                       const i32 popCount, const RecurrentNeuralNetDef& rnnDef)
+{
+    // reset speciation first
+    const f64 compT = speciation->compT;
+    *speciation = {};
+    speciation->compT = compT;
+
+    rnnAlloc(speciation->speciesRep, RNN_MAX_SPECIES, rnnDef);
+    mem_zero(speciation->speciesPopCount);
+
+    RecurrentNeuralNet** speciesRep = speciation->speciesRep;
+    i32* speciesPopCount = speciation->speciesPopCount;
+    i32 speciesCount = 0;
+    f64 biggestDist = 0.0;
+
+    const i32 weightTotalCount = rnnDef.weightTotalCount;
+
+    for(i32 i = 0; i < popCount; ++i) {
+        RecurrentNeuralNet* nni = nn[i];
+
+        bool found = false;
+        for(i32 s = 0; s < speciesCount; ++s) {
+            if(speciesPopCount[s] == 0) continue;
+
+            f64 dist = compatibilityDistance(speciesRep[s]->weights, nni->weights, weightTotalCount);
+            biggestDist = max(dist, biggestDist);
+            if(dist < compT) {
+                species[i] = s;
+                speciesPopCount[s]++;
+                found = true;
+                break;
+            }
+        }
+
+        if(!found) {
+            assert(speciesCount < RNN_MAX_SPECIES);
+            i32 sid = speciesCount++;
+            rnnCopy(speciesRep[sid], nni, rnnDef);
+            speciesPopCount[sid] = 1;
+            species[i] = sid;
+        }
+    }
+
+    LOG("initial speciesCount: %d", speciesCount);
 }
 
 void rnnPropagate(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef* def)
@@ -296,7 +363,7 @@ void rnnPropagate(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeu
             const i32 hiddenNeuronCount = def->layerNeuronCount[l];
 
             for(i32 n = 0; n < hiddenNeuronCount; ++n) {
-                f64 value = 0.0;
+                f64 value = bias; // bias
                 // prevLayervals * prevLayerWeights
                 for(i32 s = 0; s < prevNeuronCount; ++s) {
                     value += weights[s] * prevLayerVals[s];
@@ -305,8 +372,9 @@ void rnnPropagate(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeu
                 for(i32 s = 0; s < hiddenNeuronCount; ++s) {
                     value += prevHiddenWeights[s] * prevHiddenValues[s];
                 }
-                value += bias; // bias
-                hiddenStateVals[n] = hidden_activate(value);
+                value = hidden_activate(value);
+                assert(value == value); // nan check
+                hiddenStateVals[n] = value;
 
                 weights += prevNeuronCount;
                 prevHiddenWeights += hiddenNeuronCount;
@@ -322,13 +390,14 @@ void rnnPropagate(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeu
         const i32 prevNeuronCount = def->layerNeuronCount[layerCount-2];
         f64* lastHiddenVals = output - prevNeuronCount;
         for(i32 n = 0; n < outputNeuronCount; ++n) {
-            f64 value = 0.0;
+            f64 value = bias; // bias
             // hiddenState * outputWeights
             for(i32 s = 0; s < prevNeuronCount; ++s) {
                 value += weights[s] * lastHiddenVals[s];
             }
-            value += bias; // bias
-            output[n] = output_activate(value);
+            value = output_activate(value);
+            assert(value == value);  // nan check
+            output[n] = value;
 
             weights += prevNeuronCount;
         }
@@ -514,6 +583,7 @@ void rnnPropagateWide(RecurrentNeuralNet** nn, const i32 nnCount, const Recurren
 struct FitnessPair
 {
     i32 id;
+    i32 species;
     f64 fitness;
 };
 
@@ -521,6 +591,8 @@ static i32 compareFitnessDesc(const void* a, const void* b)
 {
     const FitnessPair* fa = (FitnessPair*)a;
     const FitnessPair* fb = (FitnessPair*)b;
+    if(fa->species > fb->species) return -1;
+    if(fa->species < fb->species) return 1;
     if(fa->fitness > fb->fitness) return -1;
     if(fa->fitness < fb->fitness) return 1;
     return 0;
@@ -569,55 +641,6 @@ i32 reinsertTruncateNN(i32 maxBest, i32 nnCount, f64* fitness, NeuralNet** nextG
     return maxBest;
 }
 
-i32 reinsertTruncateRNN(i32 maxBest, i32 nnCount, f64* fitness, RecurrentNeuralNet** nextGen,
-                        RecurrentNeuralNet** curGen, RecurrentNeuralNetDef* def)
-{
-    assert(nnCount < 2048);
-    FitnessPair list[2048];
-    for(i32 i = 0; i < nnCount; ++i) {
-        list[i].id = i;
-        list[i].fitness = fitness[i];
-    }
-
-    qsort(list, nnCount, sizeof(FitnessPair), compareFitnessDesc);
-
-    for(i32 i = 0; i < maxBest; ++i) {
-        memmove(nextGen[i], curGen[list[i].id], def->neuralNetSize);
-    }
-
-    return maxBest;
-}
-
-
-i32 reinsertTruncateRNNSpecies(i32 maxBest, GeneticEnvRnn* env)
-{
-    const i32 popCount = env->populationCount;
-    const f64* fitness = env->fitness;
-    RecurrentNeuralNet** curGen = env->curPopRNN;
-    RecurrentNeuralNet** nextGen = env->nextPopRNN;
-    const i32 nnSize = env->rnnDef->neuralNetSize;
-    u8* curSpecies = env->curSpeciesTags;
-    u8* nextSpecies = env->nextSpeciesTags;
-
-    assert(popCount < 2048);
-    FitnessPair list[2048];
-
-    for(i32 i = 0; i < popCount; ++i) {
-        list[i].id = i;
-        list[i].fitness = fitness[i];
-    }
-
-    qsort(list, popCount, sizeof(FitnessPair), compareFitnessDesc);
-
-    for(i32 i = 0; i < maxBest; ++i) {
-        memmove(nextGen[i], curGen[list[i].id], nnSize);
-        nextSpecies[i] = curSpecies[list[i].id];
-    }
-
-    return maxBest;
-}
-
-
 void crossover(f64* outWeights, f64* parentBWeights, f64* parentAWeights, i32 weightCount)
 {
     for(i32 s = 0; s < weightCount; ++s) {
@@ -632,11 +655,11 @@ void crossover(f64* outWeights, f64* parentBWeights, f64* parentAWeights, i32 we
     }
 }
 
-inline i32 selectRandom(const i32 reinsertCount, i32 notThisId)
+inline i32 selectRandom(const i32 count, i32 notThisId)
 {
-    i32 r = randi64(0, reinsertCount);
+    i32 r = randi64(0, count);
     while(r == notThisId) {
-        r = randi64(0, reinsertCount);
+        r = randi64(0, count);
     }
     return r;
 }
@@ -812,7 +835,7 @@ void testPropagateRNN()
     rnnMakeDef(&def, arr_count(layers), layers, 1.0);
 
     RecurrentNeuralNet* nn;
-    rnnAlloc(&nn, 1, &def);
+    rnnAlloc(&nn, 1, def);
 
     assert(def.neuronCount == 10 + 6);
     assert(def.weightTotalCount == (4 * 2 + 4 * 4 + 4 * 2 + 2 * 2 + 2 * 2));
@@ -882,7 +905,7 @@ void testPropagateRNN()
     assert(fabs(nn->output[0] - output[0]) < 0.0001);
     assert(fabs(nn->output[1] - output[1]) < 0.0001);
 
-    rnnDealloc(nn);
+    rnnDealloc(&nn);
 }
 
 void testPropagateRNNWide()
@@ -893,15 +916,15 @@ void testPropagateRNNWide()
     rnnMakeDef(&def, arr_count(layers), layers, 1.0);
 
     RecurrentNeuralNet* nn[2];
-    rnnAlloc(nn, 2, &def);
+    rnnAlloc(nn, 2, def);
 
     assert((intptr_t)nn[1] - (intptr_t)nn[0] == def.neuralNetSize);
 
-    rnnInitRandom(&nn[0], 1, &def);
+    rnnInit(&nn[0], 1, def);
     nn[0]->values[0] = randf64(0, 5.0);
     nn[0]->values[1] = randf64(0, 5.0);
 
-    rnnCopy(nn[1], nn[0], &def);
+    rnnCopy(nn[1], nn[0], def);
 
     for(i32 p = 0; p < PASSES; ++p) {
         rnnPropagate(&nn[0], 1, &def);
@@ -913,7 +936,7 @@ void testPropagateRNNWide()
         assert(fabs(nn[0]->values[i] - nn[1]->values[i]) < 0.01);
     }
 
-    rnnDealloc(nn[0]);
+    rnnDealloc(nn);
 }
 
 void testWideTanh()
@@ -944,125 +967,251 @@ void testWideTanh()
     }
 }
 
-void evolutionSSS1(GeneticEnvRnn* env)
+void rnnEvolve(RnnGeneticEnv* env, bool verbose)
 {
-    assert(env->speciesBits <= 8);
-    const i32 POP_COUNT = env->populationCount;
-    const i32 SUBPOP_MAX_COUNT = (1 << env->speciesBits);
+    const i32 popCount = env->popCount;
+    RnnSpeciation& speciation = *env->speciation;
+    assert(speciation.speciesRep[0]);
 
-    f64* indivFitness = env->fitness;
-    RecurrentNeuralNet** curPopNN = env->curPopRNN;
-    RecurrentNeuralNet** nextPopNN = env->nextPopRNN;
-    u8* curPopTag = env->curSpeciesTags;
-    u8* nextPopTag = env->nextSpeciesTags;
-    const i32 weightTotalCount = env->rnnDef->weightTotalCount;
-    const i32 neuralNetSize = env->rnnDef->neuralNetSize;
+    f64* fitness = env->fitness;
+    RecurrentNeuralNet** curGenNN = env->curGenRNN;
+    RecurrentNeuralNet** nextGenNN = env->nextGenRNN;
+    i32* curGenSpecies = env->curGenSpecies;
+    i32* nextGenSpecies = env->nextGenSpecies;
+    const RecurrentNeuralNetDef& rnnDef = *env->rnnDef;
+    const i32 weightTotalCount = rnnDef.weightTotalCount;
+    const i32 hiddenStateNeuronCount = rnnDef.hiddenStateNeuronCount;
 
-    i32* subPopIndivCount = stack_arr(i32,SUBPOP_MAX_COUNT);
-    memset(subPopIndivCount, 0, SUBPOP_MAX_COUNT * sizeof(i32));
-    f64* normFitness = stack_arr(f64,POP_COUNT);
-    const i32 parentCount = POP_COUNT * 0.3;
-    i32* parents = stack_arr(i32,parentCount);
+    f64 speciesMaxFitness[RNN_MAX_SPECIES] = {0};
 
-    for(i32 i = 0; i < POP_COUNT; ++i) {
-        u8 tag = curPopTag[i];
-        subPopIndivCount[tag]++;
+    for(i32 i = 0; i < popCount; ++i) {
+        const i32 s = curGenSpecies[i];
+        assert(s >= 0 && s < RNN_MAX_SPECIES);
+        speciesMaxFitness[s] = max(fitness[i], speciesMaxFitness[s]);
     }
 
-    // fitness sharing
-    f64 totalFitness = 0.0;
-    for(i32 i = 0; i < POP_COUNT; ++i) {
-        normFitness[i] = indivFitness[i] / subPopIndivCount[curPopTag[i]];
-        totalFitness += normFitness[i];
-    }
+    // species stagnation
+    u8* deleteSpecies = stack_arr(u8,RNN_MAX_SPECIES);
+    const i32 stagnationT = 15;
+    u16* specStagnation = speciation.stagnation;
+    f64* specStagMaxFitness = speciation.maxFitness;
 
-    // select parents
-    i32 rouletteMisses = 0;
-    u8* chosenAsParent = stack_arr(u8,POP_COUNT);
-    memset(chosenAsParent, 0, sizeof(u8)*POP_COUNT);
-    for(i32 p = 0; p < parentCount; ++p) {
-        i32 tries = 200;
-        bool found = false;
-        while(tries-- && !found) {
-            i32 s = selectRoulette(POP_COUNT, normFitness, totalFitness);
-            if(!chosenAsParent[s]) {
-                parents[p] = s;
-                chosenAsParent[s] = 1;
-                found = true;
+    for(i32 s = 0; s < RNN_MAX_SPECIES; ++s) {
+        deleteSpecies[s] = false;
+        if(speciesMaxFitness[s] <= specStagMaxFitness[s]) {
+            specStagnation[s]++;
+
+            if(specStagnation[s] > stagnationT) {
+                if(verbose) LOG("NEAT> species %x stagnating (%d)", s, specStagnation[s]);
+                deleteSpecies[s] = true;
+                specStagnation[s] = 0;
+                specStagMaxFitness[s] = 0.0;
             }
         }
-        if(!found) {
-            parents[p] = selectRoulette(POP_COUNT, normFitness, totalFitness);
-            rouletteMisses++;
+        else {
+            specStagMaxFitness[s] = speciesMaxFitness[s];
+            specStagnation[s] = 0;
         }
     }
+
+    // keep best species always
+    f64 bestMaxFitness = 0.0;
+    i32 bestSpecies = -1;
+    for(i32 s = 0; s < RNN_MAX_SPECIES; ++s) {
+        if(speciesMaxFitness[s] > bestMaxFitness) {
+            bestMaxFitness = speciesMaxFitness[s];
+            bestSpecies = s;
+        }
+    }
+    assert(bestSpecies != -1);
+    deleteSpecies[bestSpecies] = false;
+    specStagnation[bestSpecies] = 0;
+
+    FitnessPair* fpair = stack_arr(FitnessPair,popCount);
+    memset(fpair, 0, sizeof(FitnessPair) * popCount);
+    for(i32 i = 0; i < popCount; ++i) {
+        fpair[i] = { i, curGenSpecies[i], fitness[i] };
+    }
+    qsort(fpair, popCount, sizeof(FitnessPair), compareFitnessDesc);
+
+    // fitness sharing
+    i32* speciesPopCount = speciation.speciesPopCount;
+    f64* normFitness = stack_arr(f64,popCount);
+    for(i32 i = 0; i < popCount; ++i) {
+        normFitness[i] = fitness[i] * 10000.0 / speciesPopCount[curGenSpecies[i]];
+    }
+
+    // parents
+    i32* speciesParentCount = stack_arr(i32,RNN_MAX_SPECIES);
+    memset(speciesParentCount, 0, RNN_MAX_SPECIES * sizeof(i32));
+    f64* parentFitness = stack_arr(f64,popCount);
+    f64 parentTotalFitness = 0.0;
+    i32 parentCount = 0;
+
+    for(i32 i = 0; i < popCount; ++i) {
+        const i32 id = fpair[i].id;
+        const i32 species = fpair[i].species;
+        if(deleteSpecies[species]) continue;
+
+        if(speciesParentCount[species] < max(speciesPopCount[species] / 2, 1)) {
+            speciesParentCount[species]++;
+            const i32 pid = parentCount++;
+            rnnCopy(nextGenNN[pid], curGenNN[id], rnnDef);
+            nextGenSpecies[pid] = species;
+            parentFitness[pid] = normFitness[id];
+            parentTotalFitness += parentFitness[pid];
+        }
+    }
+
+    // move parent to current pop array
+    for(i32 i = 0; i < parentCount; ++i) {
+        rnnCopy(curGenNN[i], nextGenNN[i], rnnDef);
+    }
+    memmove(curGenSpecies, nextGenSpecies, sizeof(curGenSpecies[0]) * parentCount);
+
+    // copy champion of each species unchanged
+    i32 championCount = 0;
+    i32 champCheckSpec = -1;
+    for(i32 i = 0; i < parentCount; ++i) {
+        const i32 spec = curGenSpecies[i];
+        if(spec != champCheckSpec && speciesPopCount[spec] > 4) {
+            rnnCopy(nextGenNN[popCount - 1 - (championCount++)], curGenNN[i], rnnDef);
+            champCheckSpec = spec;
+        }
+    }
+
+    const i32 popCountMinusChamps = popCount - championCount;
 
     i32 noMatesFoundCount = 0;
     RecurrentNeuralNet** potentialMates = stack_arr(RecurrentNeuralNet*,parentCount);
     f64* pmFitness = stack_arr(f64,parentCount);
 
-    for(i32 i = 0; i < POP_COUNT; ++i) {
-        const i32 parentA = randi64(0, parentCount-1);
-        const i32 idA = parents[parentA];
-        const u8 tagA = curPopTag[idA];
+    for(i32 i = 0; i < popCountMinusChamps; ++i) {
+        const i32 idA = selectRoulette(parentCount, parentFitness, parentTotalFitness);
+        const i32 speciesA = curGenSpecies[idA];
+
+        // copy 25% (no crossover)
+        if(randf64(0.0, 1.0) < 0.25) {
+            rnnCopy(nextGenNN[i], curGenNN[idA], rnnDef);
+            nextGenSpecies[i] = speciesA;
+            continue;
+        }
 
         // find same sub pop mates
         i32 potentialMatesCount = 0;
         i32 pmTotalFitness = 0.0;
         for(i32 j = 0; j < parentCount; ++j) {
-            i32 idB = parents[j];
-            if(parentA != j && tagA == curPopTag[idB]) {
+            const i32 idB = j;
+            if(idA != idB && speciesA == curGenSpecies[idB]) {
                 i32 pmId = potentialMatesCount++;
-                potentialMates[pmId] = curPopNN[idB];
-                pmFitness[pmId] = normFitness[idB];
+                potentialMates[pmId] = curGenNN[idB];
+                pmFitness[pmId] = parentFitness[idB];
                 pmTotalFitness += pmFitness[pmId];
             }
         }
 
         if(potentialMatesCount < 1) {
             noMatesFoundCount++;
-            memmove(nextPopNN[i], curPopNN[idA], neuralNetSize);
-            nextPopTag[i] = tagA;
+            rnnCopy(nextGenNN[i], curGenNN[idA], rnnDef);
+            nextGenSpecies[i] = speciesA;
         }
         else {
-            RecurrentNeuralNet* mateA = curPopNN[idA];
+            RecurrentNeuralNet* mateA = curGenNN[idA];
             i32 mateBId = selectRoulette(potentialMatesCount, pmFitness, pmTotalFitness);
             RecurrentNeuralNet* mateB = potentialMates[mateBId];
-            crossover(nextPopNN[i]->weights, mateA->weights, mateB->weights, weightTotalCount);
-            nextPopTag[i] = tagA;
+
+            // A is the fittest
+            if(parentFitness[idA] < parentFitness[mateBId]) {
+                RecurrentNeuralNet* tmp = mateA;
+                mateA = mateB;
+                mateB = tmp;
+            }
+
+            crossover(nextGenNN[i]->weights, mateA->weights, mateB->weights, weightTotalCount);
+            nextGenSpecies[i] = speciesA;
         }
     }
 
-    LOG("noMatesFoundCount=%d rouletteMisses=%d", noMatesFoundCount, rouletteMisses);
+    LOG("noMatesFoundCount=%d", noMatesFoundCount);
 
     // mutate
-    const f32 mutationRate = 0.005f;
+    const f64 mutationRate = 0.05;
+    const f64 mutationStep = 0.5;
+    const f64 mutationResetWeight = 0.10;
+
     i32 mutationCount = 0;
-    for(i32 i = 0; i < POP_COUNT; ++i) {
-        f64 mutationFactor = ((f64)i/POP_COUNT) * 0.5;
+    for(i32 i = 0; i < popCountMinusChamps; ++i) {
         for(i32 s = 0; s < weightTotalCount; ++s) {
             if(randf64(0.0, 1.0) < mutationRate) {
                 mutationCount++;
-                nextPopNN[i]->weights[s] += randf64(-mutationFactor, mutationFactor);
+
+                if(randf64(0.0, 1.0) < mutationResetWeight) {
+                    nextGenNN[i]->weights[s] = randf64(-1.0, 1.0);
+                }
+                else {
+                    nextGenNN[i]->weights[s] += randf64(-mutationStep, mutationStep);
+                }
             }
         }
     }
 
-    // diffuse
-    const f32 mutationTagRate = 0.005f;
-    i32 tagMutations = 0;
-    /*for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        if(randf64(0.0, 1.0) < mutationTagRate) {
-            tagMutations++;
-            i32 bit = randi64(0, BIRD_TAG_BITS-1);
-            nextSpeciesTag[i] ^= 1 << bit;
+    LOG("mutationCount=%d", mutationCount);
+
+    for(i32 i = 0; i < popCount; ++i) {
+        rnnCopy(curGenNN[i], nextGenNN[i], rnnDef);
+    }
+    memmove(curGenSpecies, nextGenSpecies, sizeof(curGenSpecies[0]) * popCount);
+
+    for(i32 i = 0; i < popCount; ++i) {
+        memset(curGenNN[i]->prevHiddenValues, 0,
+               sizeof(curGenNN[i]->prevHiddenValues[0]) * hiddenStateNeuronCount);
+    }
+
+    // speciation
+    u8 speciesPrevExisted[RNN_MAX_SPECIES] = {0};
+    for(i32 s = 0; s < RNN_MAX_SPECIES; ++s) {
+        speciesPrevExisted[s] = (speciesPopCount[s] != 0);
+    }
+
+    RecurrentNeuralNet** speciesRep = speciation.speciesRep;
+    mem_zero(speciation.speciesPopCount); // reset species population count
+    speciesPopCount = speciation.speciesPopCount;
+    f64 biggestDist = 0.0;
+
+    const f64 compT = speciation.compT;
+
+    for(i32 i = 0; i < popCount; ++i) {
+        RecurrentNeuralNet* nni = curGenNN[i];
+
+        bool found = false;
+        for(i32 s = 0; s < RNN_MAX_SPECIES; ++s) {
+            if(!speciesPrevExisted[s] && speciesPopCount[s] == 0) continue;
+
+            f64 dist = compatibilityDistance(speciesRep[s]->weights, nni->weights, weightTotalCount);
+            biggestDist = max(dist, biggestDist);
+            if(dist < compT) {
+                curGenSpecies[i] = s;
+                speciesPopCount[s]++;
+                found = true;
+                break;
+            }
         }
-    }*/
 
-    LOG("mutationCount=%d tagMutations=%d", mutationCount, tagMutations);
+        if(!found) {
+            // find a species slot
+            i32 sid = -1;
+            for(i32 s = 0; s < RNN_MAX_SPECIES; ++s) {
+                if(!speciesPrevExisted[s] && speciesPopCount[s] == 0) {
+                    sid = s;
+                    break;
+                }
+            }
 
-    memmove(curPopNN[0], nextPopNN[0], neuralNetSize * POP_COUNT);
-    memmove(curPopTag, nextPopTag, sizeof(curPopTag[0]) * POP_COUNT);
+            rnnCopy(speciesRep[sid], nni, rnnDef);
+            speciesPopCount[sid] = 1;
+            curGenSpecies[i] = sid;
+        }
+    }
 }
 
 void ImGui_NeuralNet(NeuralNet* nn, NeuralNetDef* def)
@@ -1116,21 +1265,21 @@ void ImGui_RecurrentNeuralNet(RecurrentNeuralNet* nn, RecurrentNeuralNetDef* def
     }
 }
 
-void ImGui_SubPopWindow(const GeneticEnvRnn* env, const ImVec4* subPopColors)
+void ImGui_SubPopWindow(const RnnGeneticEnv* env, const ImVec4* subPopColors)
 {
-    const i32 POP_COUNT = env->populationCount;
-    const i32 SUBPOP_MAX_COUNT = 1 << env->speciesBits;
-    const u8* curSpeciesTag = env->curSpeciesTags;
+    const i32 POP_COUNT = env->popCount;
+    const i32 speciesCount = RNN_MAX_SPECIES;
+    const i32* curSpeciesTag = env->curGenSpecies;
     const f64* fitness = env->fitness;
 
-    f64* totalFitness = stack_arr(f64,SUBPOP_MAX_COUNT);
-    f64* maxFitness = stack_arr(f64,SUBPOP_MAX_COUNT);
-    f64* avgFitness = stack_arr(f64,SUBPOP_MAX_COUNT);
-    i32* subPopIndivCount = stack_arr(i32,SUBPOP_MAX_COUNT);
-    arr_zero(maxFitness,SUBPOP_MAX_COUNT);
-    arr_zero(totalFitness,SUBPOP_MAX_COUNT);
-    arr_zero(avgFitness,SUBPOP_MAX_COUNT);
-    arr_zero(subPopIndivCount,SUBPOP_MAX_COUNT);
+    f64* totalFitness = stack_arr(f64,speciesCount);
+    f64* maxFitness = stack_arr(f64,speciesCount);
+    f64* avgFitness = stack_arr(f64,speciesCount);
+    i32* subPopIndivCount = stack_arr(i32,speciesCount);
+    arr_zero(maxFitness,speciesCount);
+    arr_zero(totalFitness,speciesCount);
+    arr_zero(avgFitness,speciesCount);
+    arr_zero(subPopIndivCount,speciesCount);
     f64 maxTotal = 0;
     f64 maxMaxFitness = 0;
     f64 maxAvg = 0;
@@ -1141,7 +1290,7 @@ void ImGui_SubPopWindow(const GeneticEnvRnn* env, const ImVec4* subPopColors)
         totalFitness[curSpeciesTag[i]] += fitness[i];
         subPopIndivCount[curSpeciesTag[i]]++;
     }
-    for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
+    for(i32 i = 0; i < speciesCount; ++i) {
         maxTotal = max(totalFitness[i], maxTotal);
         maxMaxFitness = max(maxFitness[i], maxMaxFitness);
         avgFitness[i] = totalFitness[i]/subPopIndivCount[i];
@@ -1152,7 +1301,7 @@ void ImGui_SubPopWindow(const GeneticEnvRnn* env, const ImVec4* subPopColors)
     ImGui::Begin("Sub populations");
 
     if(ImGui::CollapsingHeader("Population count")) {
-        for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
+        for(i32 i = 0; i < speciesCount; ++i) {
             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, subPopColors[i]);
             char buff[64];
             sprintf(buff, "%d", subPopIndivCount[i]);
@@ -1162,7 +1311,7 @@ void ImGui_SubPopWindow(const GeneticEnvRnn* env, const ImVec4* subPopColors)
     }
 
     if(ImGui::CollapsingHeader("Total fitness")) {
-        for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
+        for(i32 i = 0; i < speciesCount; ++i) {
             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, subPopColors[i]);
             ImGui::ProgressBar(totalFitness[i]/maxTotal);
             ImGui::PopStyleColor(1);
@@ -1170,7 +1319,7 @@ void ImGui_SubPopWindow(const GeneticEnvRnn* env, const ImVec4* subPopColors)
     }
 
     if(ImGui::CollapsingHeader("Average fitness")) {
-        for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
+        for(i32 i = 0; i < speciesCount; ++i) {
             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, subPopColors[i]);
             ImGui::ProgressBar(avgFitness[i]/maxAvg);
             ImGui::PopStyleColor(1);
@@ -1178,7 +1327,7 @@ void ImGui_SubPopWindow(const GeneticEnvRnn* env, const ImVec4* subPopColors)
     }
 
     if(ImGui::CollapsingHeader("Max fitness")) {
-        for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
+        for(i32 i = 0; i < speciesCount; ++i) {
             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, subPopColors[i]);
             ImGui::ProgressBar(maxFitness[i]/maxMaxFitness);
             ImGui::PopStyleColor(1);

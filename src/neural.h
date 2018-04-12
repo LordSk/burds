@@ -4,6 +4,7 @@
 #include <emmintrin.h>
 
 #define MAX_LAYERS 10
+#define RNN_MAX_SPECIES 1024
 
 // wide types
 typedef __m128d w128d;
@@ -62,6 +63,10 @@ union alignas(w128d) RecurrentNeuralNet
     w128d* prevHiddenWeights;
     w128d* output;
     } wide;
+
+    inline void setInputs(f64* inputArr, const i32 count) {
+        memmove(values, inputArr, sizeof(values[0]) * count);
+    }
 };
 
 struct RecurrentNeuralNetDef
@@ -78,23 +83,36 @@ struct RecurrentNeuralNetDef
     f64 bias;
 };
 
-struct GeneticEnvRnn
+struct RnnSpeciation
 {
-    i32 populationCount;
-    i32 speciesBits;
-    u8* curSpeciesTags;
-    u8* nextSpeciesTags;
-    RecurrentNeuralNet** curPopRNN;
-    RecurrentNeuralNet** nextPopRNN;
+    RecurrentNeuralNet* speciesRep[RNN_MAX_SPECIES] = {0};
+    i32 speciesPopCount[RNN_MAX_SPECIES] = {0};
+    u16 stagnation[RNN_MAX_SPECIES] = {0};
+    f64 maxFitness[RNN_MAX_SPECIES] = {0};
+    f64 compT = 0.7; // compatibility threshold
+
+    ~RnnSpeciation();
+};
+
+struct RnnGeneticEnv
+{
+    i32 popCount;
+    i32* curGenSpecies;
+    i32* nextGenSpecies;
+    RecurrentNeuralNet** curGenRNN;
+    RecurrentNeuralNet** nextGenRNN;
     RecurrentNeuralNetDef* rnnDef;
+    RnnSpeciation* speciation;
     f64* fitness;
 };
 
 void rnnMakeDef(RecurrentNeuralNetDef* def, const i32 layerCount, const i32 layerNeuronCount[], f64 bias);
-void rnnAlloc(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef* def);
-void rnnDealloc(void* ptr);
-void rnnCopy(RecurrentNeuralNet* dest, RecurrentNeuralNet* src, RecurrentNeuralNetDef* def);
-void rnnInitRandom(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef* def);
+void rnnAlloc(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef& def);
+void rnnDealloc(RecurrentNeuralNet** nn);
+void rnnCopy(RecurrentNeuralNet* dest, RecurrentNeuralNet* src, const RecurrentNeuralNetDef& def);
+void rnnInit(RecurrentNeuralNet** nn, const i32 popCount, const RecurrentNeuralNetDef& def);
+void rnnSpeciationInit(RnnSpeciation* speciation, i32* species, RecurrentNeuralNet** nn,
+                       const i32 popCount, const RecurrentNeuralNetDef& rnnDef);
 void rnnPropagate(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef* def);
 void rnnPropagateWide(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef* def);
 void testWideTanh();
@@ -103,7 +121,7 @@ i32 reinsertTruncateNN(i32 maxBest, i32 nnCount, f64* fitness, NeuralNet** nextG
                        NeuralNet** curGen, NeuralNetDef* def);
 i32 reinsertTruncateRNN(i32 maxBest, i32 nnCount, f64* fitness, RecurrentNeuralNet** nextGen,
                         RecurrentNeuralNet** curGen, RecurrentNeuralNetDef* def);
-i32 reinsertTruncateRNNSpecies(i32 maxBest, GeneticEnvRnn* env);
+i32 reinsertTruncateRNNSpecies(i32 maxBest, RnnGeneticEnv* env);
 void crossover(f64* outWeights, f64* parentBWeights,
                f64* parentAWeights, i32 weightCount);
 i32 selectTournament(const i32 reinsertCount, const i32 tournamentSize, i32 notThisId, const f64* fitness);
@@ -119,8 +137,8 @@ void testPropagateRNNWide();
 void generateSpeciesTags(u8* tags, const i32 tagCount, const i32 bitCount);
 
 // Simple subpopulation scheme evolution
-void evolutionSSS1(GeneticEnvRnn* env);
+void rnnEvolve(RnnGeneticEnv* env, bool verbose = false);
 
 void ImGui_NeuralNet(NeuralNet* nn, NeuralNetDef* def);
 void ImGui_RecurrentNeuralNet(RecurrentNeuralNet* nn, RecurrentNeuralNetDef* def);
-void ImGui_SubPopWindow(const GeneticEnvRnn* env, const struct ImVec4* subPopColors);
+void ImGui_SubPopWindow(const RnnGeneticEnv* env, const struct ImVec4* subPopColors);
