@@ -57,7 +57,7 @@ constexpr i32 SUBPOP_MAX_COUNT = 1 << FROG_TAG_BITS;
 
 #define SIMULATION_MAX_TIME 90.0
 
-#define NEURAL_NET_LAYERS { 6, 10, 2 }
+#define NEURAL_NET_LAYERS { 7, 6, 2 }
 
 //#define VISION_WIDTH 32 // is a square
 
@@ -400,8 +400,8 @@ void resetMap()
         mapAvgWater[i] /= (f32)MAP_WATER_AVG_GRID_SIZE * MAP_WATER_AVG_GRID_SIZE;
     }
 
-    const Color3 grassColor = {10, 50, 0};
-    const Color3 waterColor = {0, 157, 255};
+    const Color3 grassColor = {30, 60, 20};
+    const Color3 waterColor = {0, 117, 205};
     const Color3 deathColor = {0, 0, 0};
     const i32 grassVariance = 4;
     const i32 waterVariance = 10;
@@ -456,13 +456,14 @@ void resetFrogColors()
 {
     const u32 colorMax = 0xFF;
     const u32 colorMin = 0x0;
-    const u32 colorDelta = colorMax - colorMin;
 
-    for(i32 i = 0; i < FROG_COUNT; ++i) {
-        Color3 c;
-        c.r = (xorshift64star() % colorDelta) + colorMin;
-        c.g = (xorshift64star() % colorDelta) + colorMin;
-        c.b = (xorshift64star() % colorDelta) + colorMin;
+    for(i32 i = 0; i < RNN_MAX_SPECIES; ++i) {
+        Color3 c = {0, 0, 0};
+        while((c.r + c.g + c.b) / 3.0 < 100) {
+            c.r = randi64(colorMin, colorMax);
+            c.g = randi64(colorMin, colorMax);
+            c.b = randi64(colorMin, colorMax);
+        }
         speciesColor[i] = c;
     }
 }
@@ -471,21 +472,39 @@ void resetFrogs()
 {
     simulationTime = 0;
 
-    memset(frogAngle, 0, sizeof(frogAngle));
-    memset(frogJumpTime, 0, sizeof(frogJumpTime));
-    memset(frogTongueTime, 0, sizeof(frogTongueTime));
-    memset(frogDead, 0, sizeof(frogDead));
-    memset(frogFitness, 0, sizeof(frogFitness));
+    mem_zero(frogAngle);
+    mem_zero(frogJumpTime);
+    mem_zero(frogTongueTime);
+    mem_zero(frogDead);
+    mem_zero(frogFitness);
 
     for(i32 i = 0; i < FROG_COUNT; ++i) {
-        bool onWater = true;
-        while(onWater) {
+        bool retry = true;
+        while(retry) {
+            retry = false;
+
             frogPos[i] = vec2Make(randf64(TILE_SIZE + 1.0, (MAP_WIDTH-1) * TILE_SIZE - 1),
                                   randf64(TILE_SIZE + 1.0, (MAP_HEIGHT-1) * TILE_SIZE - 1));
             i32 mx = frogPos[i].x / TILE_SIZE;
             i32 my = frogPos[i].y / TILE_SIZE;
-            onWater = mapData[my * MAP_WIDTH + mx] == MAP_TILE_WATER;
             assert(mapData[my * MAP_WIDTH + mx] != MAP_TILE_DEATH);
+            if(mapData[my * MAP_WIDTH + mx] == MAP_TILE_WATER) {
+                retry = true;
+                continue;
+            }
+
+            // restrict frogs from spawning too far off ponds
+            f32 minDist = FLT_MAX;
+            for(i32 p = 0; p < pondCount; ++p) {
+                const Vec2 pondTilePos = vec2Make((pondPos[p] % MAP_WIDTH) * TILE_SIZE,
+                                                  (pondPos[p] / MAP_WIDTH) * TILE_SIZE);
+                f32 dist = vec2Distance(&frogPos[i], &pondTilePos) - (pondRadius[p] * TILE_SIZE);
+                if(dist < minDist) {
+                    minDist = dist;
+                }
+            }
+
+            retry |= minDist > 1000.f;
         }
     }
 
@@ -500,16 +519,10 @@ void resetFrogs()
     }
 }
 
-void resetFrogSpecies()
-{
-    for(i32 i = 0; i < FROG_COUNT; ++i) {
-        curGenSpecies[i] = randi64(0, (1 << FROG_TAG_BITS)-1);
-    }
-}
-
 void resetSimulation()
 {
-    resetFrogSpecies();
+    resetMap();
+    resetFrogColors();
     resetFrogs();
 
     generationNumber = 0;
@@ -699,7 +712,45 @@ void ui_debug()
 
 void ui_subPopulations()
 {
-    //TODO: fix
+    ImVec4 subPopColors[RNN_MAX_SPECIES];
+    const i32 speciesCount = RNN_MAX_SPECIES;
+    for(i32 i = 0; i < speciesCount; ++i) {
+        Color3 sc = speciesColor[i];
+        subPopColors[i] = ImVec4(sc.r/255.f, sc.g/255.f, sc.b/255.f, 1.f);
+    }
+
+    i32 maxPopCount = 0;
+    for(i32 i = 0; i < speciesCount; ++i) {
+        maxPopCount = max(speciation.speciesPopCount[i], maxPopCount);
+    }
+
+    ImGui::Begin("Speciation");
+
+    ImGui::Columns(3, 0, false);
+    ImGui::SetColumnWidth(0, 100);
+    ImGui::SetColumnWidth(1, 80);
+    ImGui::SetColumnWidth(2, 50);
+
+    for(i32 i = 0; i < speciesCount; ++i) {
+        if(speciation.speciesPopCount[i] == 0) continue;
+
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, subPopColors[i]);
+
+        char buff[64];
+        sprintf(buff, "%d", speciation.speciesPopCount[i]);
+        ImGui::ProgressBar(speciation.speciesPopCount[i]/(f32)maxPopCount, ImVec2(100,0), buff);
+        ImGui::NextColumn();
+        ImGui::TextColored(subPopColors[i], "%g", speciation.maxFitness[i]);
+        ImGui::NextColumn();
+        ImGui::TextColored(subPopColors[i], "%d", speciation.stagnation[i]);
+        ImGui::NextColumn();
+
+        ImGui::PopStyleColor(1);
+    }
+
+    ImGui::Columns(1);
+
+    ImGui::End();
 }
 
 void ui_lastGeneration()
@@ -733,43 +784,63 @@ void ui_lastGeneration()
     ImGui::End();
 }
 
+void ui_simulationOptions()
+{
+    ImGui::Begin("Options");
+
+    ImGui::TextUnformatted("Map");
+    ImGui::BeginGroup();
+    static i32 newPondCount = pondCount;
+    ImGui::PushItemWidth(100);
+    ImGui::SliderInt("Pond count", &newPondCount, 1, MAP_POND_MAX_COUNT);
+    ImGui::PopItemWidth();
+
+    if(ImGui::Button("Reset map")) {
+        pondCount = newPondCount;
+        resetMap();
+    }
+    ImGui::EndGroup();
+
+    ImGui::Separator();
+
+    ImGui::TextUnformatted("Game");
+    ImGui::BeginGroup();
+
+    ImGui::PushItemWidth(100);
+    ImGui::SliderInt("Time scale", &timeScale, 1, 20);
+    ImGui::PopItemWidth();
+
+    if(ImGui::Button("Reset game")) {
+        resetFrogs();
+    }
+
+    ImGui::EndGroup();
+
+    ImGui::End();
+}
+
 void doUI()
 {
     window.uiNewFrame();
     ImGui::StyleColorsDark();
 
-    ImGui::Begin("Options");
-
-        ImGui::TextUnformatted("Map");
-        ImGui::BeginGroup();
-            static i32 newPondCount = pondCount;
-            ImGui::SliderInt("Pond count", &newPondCount, 1, MAP_POND_MAX_COUNT);
-
-            if(ImGui::Button("Reset map")) {
-                pondCount = newPondCount;
-                resetMap();
-            }
-        ImGui::EndGroup();
-
-        ImGui::Separator();
-
-        ImGui::TextUnformatted("Game");
-        ImGui::BeginGroup();
-            ImGui::SliderInt("Time scale", &timeScale, 1, 20);
-
-            if(ImGui::Button("Reset game")) {
-                resetFrogs();
-            }
-        ImGui::EndGroup();
-
-    ImGui::End();
-
     ui_debug();
     ui_championViewer();
     ui_subPopulations();
     ui_lastGeneration();
+    ui_simulationOptions();
 
     //ImGui::ShowDemoWindow();
+}
+
+inline bool frogIsJumping(i32 id)
+{
+    return frogJumpTime[id] > 0 && frogJumpTime[id] * 1000 < FROG_ANIM_JUMP;
+}
+
+inline bool frogIsEating(i32 id)
+{
+    return frogTongueTime[id] > 0 && frogTongueTime[id] * 1000 < FROG_ANIM_TONGUE;
 }
 
 void updateNNs()
@@ -805,34 +876,10 @@ void updateNNs()
                 frogWaterSensors[i].sens[s] = mapAvgWater[sensorX + sensorY * MAP_WATER_AVG_WIDTH];
             }
         }
-
-#if 0
-        const i32 frogX = frogPos[i].x / TILE_SIZE;
-        const i32 frogY = frogPos[i].y / TILE_SIZE;
-        frogWaterSensors[i] = {};
-        for(i32 y = 0; y < VISION_WIDTH; ++y) {
-            for(i32 x = 0; x < VISION_WIDTH; ++x) {
-                i32 mx = frogX + x - VISION_WIDTH/2;
-                i32 my = frogY + y - VISION_WIDTH/2;
-                i32 wi = (x / (VISION_WIDTH/2)) + (y / (VISION_WIDTH/2)) * 2;
-                assert(wi < 4);
-
-                if(my < 0 || my >= MAP_HEIGHT || mx < 0 || mx >= MAP_WIDTH) {
-                }
-                else {
-                    frogWaterSensors[i].sens[wi] += mapData[my * MAP_WIDTH + mx];
-                }
-            }
-        }
-        frogWaterSensors[i].sens[0] /= waterSmellSquareCount;
-        frogWaterSensors[i].sens[1] /= waterSmellSquareCount;
-        frogWaterSensors[i].sens[2] /= waterSmellSquareCount;
-        frogWaterSensors[i].sens[3] /= waterSmellSquareCount;
-#endif
     }
 
     for(i32 i = 0; i < FROG_COUNT; ++i) {
-        //if(frogDead[i]) continue;
+        if(frogDead[i]) continue;
         const i32 frogTileX = frogPos[i].x / TILE_SIZE;
         const i32 frogTileY = frogPos[i].y / TILE_SIZE;
         const Vec2 frogTilePos = vec2Make(frogTileX, frogTileY);
@@ -850,24 +897,10 @@ void updateNNs()
         }
 
         Vec2 pondV = vec2Minus(&chosenPondPos, &frogPos[i]);
-        //pondV = vec2Normalize(&pondV);
-        Vec2 vx = {1.0f, 0.0f};
         Vec2 dir = {cosf(frogAngle[i]), sinf(frogAngle[i])};
-        //frogClosestPondAngleDiff[i] = vec2Dot(&pondV, &dir);
         f32 diff = vec2AngleBetween(&dir, &pondV);
-
         frogClosestPondAngleDiff[i] = diff / PI;
         assert(frogClosestPondAngleDiff[i] >= -1.0 && frogClosestPondAngleDiff[i] <= 1.0);
-        /*f32 angle = vec2Angle(&pondV);
-        f32 diff = angle - frogAngle[i];
-        if(diff < 0.0f) {
-            diff += TAU;
-        }
-        else if(diff > TAU) {
-            diff -= TAU;
-        }
-        frogClosestPondAngleDiff[i] = diff / TAU;
-        assert(frogClosestPondAngleDiff[i] >= 0.0f && frogClosestPondAngleDiff[i] <= 1.0f);*/
     }
 
     f64 oldClosestPondFactor[FROG_COUNT];
@@ -931,20 +964,17 @@ void updateNNs()
 
     for(i32 i = 0; i < FROG_COUNT; ++i) {
         if(frogDead[i]) continue;
-        f64 input[6];
+        f64 input[7];
         assert(arr_count(input) == nnDef.inputNeuronCount);
+
         input[0] = frogWaterSensors[i].sens[0];
         input[1] = frogWaterSensors[i].sens[1];
         input[2] = frogWaterSensors[i].sens[2];
         input[3] = frogWaterSensors[i].sens[3];
-
         input[4] = frogClosestPondAngleDiff[i];
-        input[5] = frogHydration[i] / HYDRATION_TOTAL;
-        //input[1] = frogIsInWater[i];
-        //input[1] = frogClosestDeathBondFactor[i];
-        //input[2] = frogAngle[i] / TAU;
-        //input[2] = frogEnergy[i];
-        //input[3] = frogHydration[i];
+        input[5] = frogJumpTime[i] == 0;
+        input[6] = frogTongueTime[i] == 0;
+
         curGenNN[i]->setInputs(input, arr_count(input));
         nnets[nnetsCount++] = curGenNN[i];
     }
@@ -967,10 +997,10 @@ void updateNNs()
         assert(output[0] >= 0.0 && output[0] <= 1.0);
         assert(output[1] >= 0.0 && output[1] <= 1.0);
 
-        frogInput[i].angle = output[0] * TAU * 10.0;
-        if(frogInput[i].angle > TAU) {
-            f64 excess = (i32)(frogInput[i].angle/TAU) * TAU;
-            frogInput[i].angle -= excess;
+        // turn if we're not eating/jumping
+        if(!frogIsJumping(i) && !frogIsEating(i)) {
+            f64 a = max(output[0] - 0.5, 0.0) * 2.0 * TAU;
+            frogInput[i].angle = fmod(frogInput[i].angle + a * FRAME_DT, TAU);
         }
 
         frogInput[i].action = output[1] * 3;
@@ -986,19 +1016,14 @@ void updatePhysics()
         if(frogDead[i]) continue;
         frogAngle[i] = frogInput[i].angle;
 
-        if(frogInput[i].action == INPUT_ACTION_JUMP) {
-            i64 jumpDeltaMs = frogJumpTime[i] * 1000;
-            bool doJump = jumpDeltaMs < FROG_ANIM_JUMP;
+        if(frogIsJumping(i)) {
+            const f32 angle = frogAngle[i];
+            const Vec2 moveVec = vec2Make(cosf(angle) * FROG_SPEED * FRAME_DT,
+                                    sinf(angle) * FROG_SPEED * FRAME_DT);
+            frogPos[i] = vec2Add(&frogPos[i], &moveVec);
 
-            if(doJump) {
-                f32 angle = frogAngle[i];
-                Vec2 moveVec = vec2Make(cosf(angle) * FROG_SPEED * FRAME_DT,
-                                        sinf(angle) * FROG_SPEED * FRAME_DT);
-                frogPos[i] = vec2Add(&frogPos[i], &moveVec);
-
-                frogPos[i].x = clampf64(frogPos[i].x, 0, MAP_WIDTH * TILE_SIZE - 1.0);
-                frogPos[i].y = clampf64(frogPos[i].y, 0, MAP_HEIGHT * TILE_SIZE - 1.0);
-            }
+            frogPos[i].x = clampf64(frogPos[i].x, 0, MAP_WIDTH * TILE_SIZE - 1.0);
+            frogPos[i].y = clampf64(frogPos[i].y, 0, MAP_HEIGHT * TILE_SIZE - 1.0);
         }
     }
 }
@@ -1030,29 +1055,37 @@ void updateMechanics()
     for(i32 i = 0; i < FROG_COUNT; ++i) {
         if(frogDead[i]) continue;
 
-        if(frogInput[i].action != INPUT_ACTION_JUMP) {
+        if(frogInput[i].action != INPUT_ACTION_JUMP && frogJumpTime[i] > FROG_ANIM_JUMP) {
             frogJumpTime[i] = 0;
         }
         if(frogInput[i].action != INPUT_ACTION_EAT) {
             frogTongueTime[i] = 0;
         }
 
-        if(frogInput[i].action == INPUT_ACTION_JUMP) {
-            if(frogJumpTime[i] == 0) {
-                frogEnergy[i] -= ENERGY_JUMP_DRAIN;
-            }
+        if(frogJumpTime[i]) {
             frogJumpTime[i] += FRAME_DT;
             if(frogJumpTime[i] * 1000 > FROG_JUMP_CD) {
                 frogJumpTime[i] = 0;
             }
         }
-        else if(frogInput[i].action == INPUT_ACTION_EAT) {
-            if(frogTongueTime[i] == 0) {
-                frogEnergy[i] -= ENERGY_EAT_DRAIN;
-            }
+
+        if(frogTongueTime[i]) {
             frogTongueTime[i] += FRAME_DT;
             if(frogTongueTime[i] * 1000 > FROG_TONGUE_CD) {
                 frogTongueTime[i] = 0;
+            }
+        }
+
+        if(frogInput[i].action == INPUT_ACTION_JUMP) {
+            if(frogJumpTime[i] == 0) {
+                frogEnergy[i] -= ENERGY_JUMP_DRAIN;
+                frogJumpTime[i] += FRAME_DT;
+            }
+        }
+        else if(frogInput[i].action == INPUT_ACTION_EAT) {
+            if(frogTongueTime[i] == 0) {
+                frogEnergy[i] -= ENERGY_EAT_DRAIN;
+                frogTongueTime[i] += FRAME_DT;
             }
         }
     }
@@ -1088,8 +1121,8 @@ void updateMechanics()
         if(frogDead[i]) continue;
 
         //frogFitness[i] += FRAME_DT;
-        frogFitness[i] += frogRewards[i];
-        //frogFitness[i] += frogHydration[i] / HYDRATION_TOTAL;
+        frogFitness[i] += frogRewards[i] * FRAME_DT;
+        frogFitness[i] += frogHydration[i] / HYDRATION_TOTAL * FRAME_DT;
         //frogFitness[i] += (frogEnergy[i] / ENERGY_TOTAL) * 0.5;
         //frogFitness[i] += frogFliesEatenCount;
 
@@ -1155,15 +1188,11 @@ void newFrame()
             continue;
         }
 
-        if(frogInput[i].action == INPUT_ACTION_JUMP) {
-            i64 jumpDeltaMs = frogJumpTime[i] * 1000;
-            bool doJump = jumpDeltaMs < FROG_ANIM_JUMP;
-            frogTexId[i] = doJump ? FROG_TEX_JUMP : FROG_TEX_STILL;
+        if(frogIsJumping(i)) {
+            frogTexId[i] = FROG_TEX_JUMP;
         }
-        else if(frogInput[i].action == INPUT_ACTION_EAT) {
-            i64 tongueDeltaMs = frogTongueTime[i] * 1000;
-            bool doTongue = tongueDeltaMs < FROG_ANIM_TONGUE;
-            frogTexId[i] = doTongue ? FROG_TEX_TONGUE : FROG_TEX_STILL;
+        else if(frogIsEating(i)) {
+            frogTexId[i] = FROG_TEX_TONGUE;
         }
         else {
             frogTexId[i] = FROG_TEX_STILL;
@@ -1307,10 +1336,6 @@ void render()
     Quad championOverlay = quadOneColor(champX - FROG_SIZE, champX + FROG_SIZE,
                                         champY - FROG_SIZE, champY + FROG_SIZE, champColor);
     drawQuadBatch(&championOverlay, 1);
-
-    /*Quad quad = quadOneColor(dbgLastMouseLeftClick.x, dbgLastMouseLeftClick.x + 200.f,
-                             dbgLastMouseLeftClick.y, dbgLastMouseLeftClick.y + 200.f, {255, 128, 0, 255});
-    drawQuadBatch(&quad, 1);*/
 
     imguiRender();
 }
