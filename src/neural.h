@@ -94,16 +94,19 @@ struct RnnSpeciation
     ~RnnSpeciation();
 };
 
-struct RnnGeneticEnv
+struct RnnEvolutionParams
 {
     i32 popCount;
-    i32* curGenSpecies;
-    i32* nextGenSpecies;
+    f64* fitness;
     RecurrentNeuralNet** curGenRNN;
     RecurrentNeuralNet** nextGenRNN;
     RecurrentNeuralNetDef* rnnDef;
+    i32* curGenSpecies;
+    i32* nextGenSpecies;
     RnnSpeciation* speciation;
-    f64* fitness;
+    f64 mutationRate = 2.0;
+    f64 mutationStep = 0.5;
+    f64 mutationReset = 0.1;
 };
 
 void rnnMakeDef(RecurrentNeuralNetDef* def, const i32 layerCount, const i32 layerNeuronCount[], f64 bias);
@@ -117,28 +120,17 @@ void rnnPropagate(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeu
 void rnnPropagateWide(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef* def);
 void testWideTanh();
 
-i32 reinsertTruncateNN(i32 maxBest, i32 nnCount, f64* fitness, NeuralNet** nextGen,
-                       NeuralNet** curGen, NeuralNetDef* def);
-i32 reinsertTruncateRNN(i32 maxBest, i32 nnCount, f64* fitness, RecurrentNeuralNet** nextGen,
-                        RecurrentNeuralNet** curGen, RecurrentNeuralNetDef* def);
-i32 reinsertTruncateRNNSpecies(i32 maxBest, RnnGeneticEnv* env);
+
 void crossover(f64* outWeights, f64* parentBWeights,
                f64* parentAWeights, i32 weightCount);
-i32 selectTournament(const i32 reinsertCount, const i32 tournamentSize, i32 notThisId, const f64* fitness);
-i32 selectTournamentSpecies(const i32 count, i32 tries, i32 notThisId, const f64* fitness,
-                            const u8* speciesTags, const u8 thisTag);
-i32 mutateNN(f32 rate, f32 factor, i32 nnCount, NeuralNet** nextGen, NeuralNetDef* def);
-i32 mutateRNN(f32 rate, f32 factor, i32 nnCount, RecurrentNeuralNet** nextGen, RecurrentNeuralNetDef* def);
 
 void testPropagateNN();
 void testPropagateRNN();
 void testPropagateRNNWide();
 
-void generateSpeciesTags(u8* tags, const i32 tagCount, const i32 bitCount);
 
-// Simple subpopulation scheme evolution
-void rnnEvolve(RnnGeneticEnv* env, bool verbose = false);
+void rnnEvolve(RnnEvolutionParams* params, bool verbose = false);
 
 void ImGui_NeuralNet(NeuralNet* nn, NeuralNetDef* def);
 void ImGui_RecurrentNeuralNet(RecurrentNeuralNet* nn, RecurrentNeuralNetDef* def);
-void ImGui_SubPopWindow(const RnnGeneticEnv* env, const struct ImVec4* subPopColors);
+void ImGui_SubPopWindow(const RnnEvolutionParams* env, const struct ImVec4* subPopColors);

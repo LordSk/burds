@@ -6,6 +6,7 @@
 #include <float.h>
 #include <assert.h>
 
+#include "window.h"
 #include "sprite.h"
 #include "neural.h"
 #include "imgui/imgui.h"
@@ -94,10 +95,8 @@ struct WaterSensors
 
 struct App {
 
-SDL_Window* window;
-SDL_GLContext glContext;
-ImGuiGLSetup* ims;
-bool running = true;
+AppWindow window;
+
 i32 timeScale = 1;
 
 f32 viewZoom = 5.0f;
@@ -137,16 +136,19 @@ f32 frogHydration[FROG_COUNT];
 u8 frogDead[FROG_COUNT];
 
 f64 frogFitness[FROG_COUNT];
-u8 curSpeciesTag[FROG_COUNT];
-u8 nextSpeciesTag[FROG_COUNT];
 
+RnnSpeciation speciation;
+RnnEvolutionParams evolParams;
 RecurrentNeuralNetDef nnDef;
 RecurrentNeuralNet* curGenNN[FROG_COUNT];
 RecurrentNeuralNet* nextGenNN[FROG_COUNT];
+i32 curGenSpecies[FROG_COUNT];
+i32 nextGenSpecies[FROG_COUNT];
 i32 generationNumber = 0;
 
 f32 simulationTime = 0;
 
+bool dbgTimeMaxSpeed = false;
 bool dbgShowBars = false;
 bool dbgShowDirections = false;
 bool dbgOverlayAvgWaterMap = false;
@@ -165,54 +167,11 @@ GenerationStats curGenStats;
 GenerationStats lastGenStats;
 GenerationStats pastGenStats[STATS_HISTORY_COUNT];
 
-f64 outMin = 1.0;
-f64 outMax = 0.0;
-
-GeneticEnvRnn geneticEnv = { FROG_COUNT, FROG_TAG_BITS, curSpeciesTag, nextSpeciesTag,
-                           curGenNN, nextGenNN, &nnDef, frogFitness};
-
 bool init()
 {
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-
-    window = SDL_CreateWindow("Frogs",
-                              SDL_WINDOWPOS_CENTERED,
-                              SDL_WINDOWPOS_CENTERED,
-                              WINDOW_WIDTH, WINDOW_HEIGHT,
-                              SDL_WINDOW_OPENGL);
-
-    if(!window) {
-        LOG("ERROR: can't create SDL2 window (%s)",  SDL_GetError());
+    if(!window.init("Frogs [RNN]", "frogs_app_imgui.ini")) {
+        LOG("ERROR: can't create window");
         return false;
-    }
-
-    glContext = SDL_GL_CreateContext(window);
-    if(!glContext) {
-        LOG("ERROR: can't create OpenGL 3.3 context (%s)",  SDL_GetError());
-        return false;
-    }
-
-    SDL_GL_SetSwapInterval(0);
-
-    if(gl3w_init()) {
-        LOG("ERROR: can't init gl3w");
-        return false;
-    }
-
-    if(!gl3w_is_supported(3, 3)) {
-        LOG("ERROR: OpenGL 3.3 isn't available on this system");
-        return false;
-    }
-
-    if(!initSpriteState(WINDOW_WIDTH, WINDOW_HEIGHT)) {
-        return false;
-    }
-
-    ims = imguiInit(WINDOW_WIDTH, WINDOW_HEIGHT);
-    if(!ims) {
-        LOG("ERROR: could not init imgui");
     }
 
     glClearColor(0.2, 0.2, 0.2, 1.0f);
@@ -231,14 +190,23 @@ bool init()
     glGenTextures(1, &tex_map);
     glGenTextures(1, &tex_mapAvgWater);
 
+    evolParams.popCount = FROG_COUNT;
+    evolParams.fitness = frogFitness;
+    evolParams.curGenRNN = curGenNN;
+    evolParams.nextGenRNN = nextGenNN;
+    evolParams.rnnDef = &nnDef;
+    evolParams.curGenSpecies = curGenSpecies;
+    evolParams.nextGenSpecies = nextGenSpecies;
+    evolParams.speciation = &speciation;
+
     resetMap();
     resetFrogColors();
 
     const i32 layers[] = NEURAL_NET_LAYERS;
 
     rnnMakeDef(&nnDef, arr_count(layers), layers, 1.0);
-    rnnAlloc(curGenNN, FROG_COUNT, &nnDef);
-    rnnAlloc(nextGenNN, FROG_COUNT, &nnDef);
+    rnnAlloc(curGenNN, FROG_COUNT, nnDef);
+    rnnAlloc(nextGenNN, FROG_COUNT, nnDef);
 
     resetSimulation();
 
@@ -247,73 +215,57 @@ bool init()
 
 void cleanup()
 {
-    rnnDealloc(curGenNN[0]);
-    rnnDealloc(nextGenNN[0]);
+    rnnDealloc(curGenNN);
+    rnnDealloc(nextGenNN);
 }
 
 void run()
 {
-    while(running) {
+    while(window.running) {
         timept t0 = timeGet();
 
         SDL_Event event;
         while(SDL_PollEvent(&event)) {
+            window.uiHandleEvent(&event);
             handleEvent(&event);
         }
 
-        updateCamera();
-
         newFrame();
         render();
-        SDL_GL_SwapWindow(window);
+        window.swap();
 
-        const i64 frameDtMicro = FRAME_DT/timeScale * 1000000;
-        while(((frameDtMicro - timeToMicrosec(timeGet() - t0)) / 1000) > 1) {
-            _mm_pause();
+        if(!dbgTimeMaxSpeed) {
+            const i64 frameDtMicro = FRAME_DT/timeScale * 1000000;
+            while(((frameDtMicro - timeToMicrosec(timeGet() - t0)) / 1000) > 1) {
+                _mm_pause();
+            }
         }
     }
 }
 
 void handleEvent(SDL_Event* event)
 {
-    imguiHandleInput(ims, *event);
-
     if(event->type == SDL_QUIT) {
-        running = false;
+        window.running = false;
         return;
     }
 
     if(event->type == SDL_KEYDOWN) {
         if(event->key.keysym.sym == SDLK_ESCAPE) {
-            running = false;
+            window.running = false;
             return;
         }
-
-        /*if(event->key.keysym.sym == SDLK_q) {
-            birdInput[0].left = 1;
-        }
-        if(event->key.keysym.sym == SDLK_d) {
-            birdInput[0].right = 1;
-        }*/
 
         if(event->key.keysym.sym == SDLK_r) {
            resetMap();
            return;
         }
 
-        /*if(event->key.keysym.sym == SDLK_n) {
-           resetTraining();
-        }*/
+        if(event->key.keysym.sym == SDLK_n) {
+           resetSimulation();
+           return;
+        }
     }
-
-    /*if(event->type == SDL_KEYUP) {
-        if(event->key.keysym.sym == SDLK_q) {
-            birdInput[0].left = 0;
-        }
-        if(event->key.keysym.sym == SDLK_d) {
-            birdInput[0].right = 0;
-        }
-    }*/
 
     if(event->type == SDL_MOUSEBUTTONDOWN) {
         if(event->button.button == SDL_BUTTON_RIGHT) {
@@ -551,7 +503,7 @@ void resetFrogs()
 void resetFrogSpecies()
 {
     for(i32 i = 0; i < FROG_COUNT; ++i) {
-        curSpeciesTag[i] = randi64(0, (1 << FROG_TAG_BITS)-1);
+        curGenSpecies[i] = randi64(0, (1 << FROG_TAG_BITS)-1);
     }
 }
 
@@ -563,7 +515,8 @@ void resetSimulation()
     generationNumber = 0;
     curGenStats = {};
     memset(pastGenStats, 0, sizeof(pastGenStats));
-    rnnInitRandom(curGenNN, FROG_COUNT, &nnDef);
+    rnnInit(curGenNN, FROG_COUNT, nnDef);
+    rnnSpeciationInit(&speciation, curGenSpecies, curGenNN, FROG_COUNT, nnDef);
 }
 
 void ImGui_ColoredRect(const ImVec2& size, const ImVec4& color)
@@ -746,13 +699,7 @@ void ui_debug()
 
 void ui_subPopulations()
 {
-    ImVec4 subPopColors[SUBPOP_MAX_COUNT];
-    for(i32 i = 0; i < SUBPOP_MAX_COUNT; ++i) {
-        Color3 sc = speciesColor[i];
-        subPopColors[i] = ImVec4(sc.r/255.f, sc.g/255.f, sc.b/255.f, 1.f);
-    }
-
-    ImGui_SubPopWindow(&geneticEnv, subPopColors);
+    //TODO: fix
 }
 
 void ui_lastGeneration()
@@ -788,6 +735,7 @@ void ui_lastGeneration()
 
 void doUI()
 {
+    window.uiNewFrame();
     ImGui::StyleColorsDark();
 
     ImGui::Begin("Options");
@@ -983,38 +931,41 @@ void updateNNs()
 
     for(i32 i = 0; i < FROG_COUNT; ++i) {
         if(frogDead[i]) continue;
-        f64* input = curGenNN[i]->values;
+        f64 input[6];
+        assert(arr_count(input) == nnDef.inputNeuronCount);
         input[0] = frogWaterSensors[i].sens[0];
         input[1] = frogWaterSensors[i].sens[1];
         input[2] = frogWaterSensors[i].sens[2];
         input[3] = frogWaterSensors[i].sens[3];
-        input += 4;
 
-        input[0] = frogClosestPondAngleDiff[i];
-        input[1] = frogHydration[i] / HYDRATION_TOTAL;
+        input[4] = frogClosestPondAngleDiff[i];
+        input[5] = frogHydration[i] / HYDRATION_TOTAL;
         //input[1] = frogIsInWater[i];
         //input[1] = frogClosestDeathBondFactor[i];
         //input[2] = frogAngle[i] / TAU;
         //input[2] = frogEnergy[i];
         //input[3] = frogHydration[i];
-        input += 2;
-        assert(input - curGenNN[i]->values == nnDef.inputNeuronCount);
+        curGenNN[i]->setInputs(input, arr_count(input));
         nnets[nnetsCount++] = curGenNN[i];
     }
 
-    //rnnPropagate(nnets, nnetsCount, &nnDef);
+#ifdef CONF_DEBUG
+    rnnPropagate(nnets, nnetsCount, &nnDef);
+#else
     rnnPropagateWide(nnets, nnetsCount, &nnDef);
+#endif
 
     for(i32 i = 0; i < FROG_COUNT; ++i) {
         if(frogDead[i]) continue;
-        f64* output = curGenNN[i]->output;
-        /*output[0] = (output[0] + 1.0) * 0.5;
-        output[1] = (output[1] + 1.0) * 0.5;*/
+        f64 output[2];
+        assert(arr_count(output) == nnDef.outputNeuronCount);
+        memmove(output, curGenNN[i]->output, sizeof(output));
+
+        // tanh
+        output[0] = (output[0] + 1.0) * 0.5;
+        output[1] = (output[1] + 1.0) * 0.5;
         assert(output[0] >= 0.0 && output[0] <= 1.0);
         assert(output[1] >= 0.0 && output[1] <= 1.0);
-
-        outMin = min(outMin, output[0]);
-        outMax = max(outMax, output[0]);
 
         frogInput[i].angle = output[0] * TAU * 10.0;
         if(frogInput[i].angle > TAU) {
@@ -1173,10 +1124,6 @@ void updateMechanics()
 
 void newGeneration()
 {
-    LOG("outMin=%g outMax=%g", outMin, outMax);
-    outMin = 1.0;
-    outMax = 0.0;
-
     lastGenStats = curGenStats;
     memmove(pastGenStats, pastGenStats+1, sizeof(pastGenStats) - sizeof(pastGenStats[0]));
     pastGenStats[STATS_HISTORY_COUNT-1] = lastGenStats;
@@ -1184,20 +1131,19 @@ void newGeneration()
     curGenStats = {};
     curGenStats.number = generationNumber++;
 
-    LOG("#%d maxFitness=%.5f avg=%.5f", lastGenStats.number, lastGenStats.maxFitness,
-        lastGenStats.avgFitness);
+    LOG("#%d maxFitness=%.5f avg=%.5f", generationNumber,
+        lastGenStats.maxFitness, lastGenStats.avgFitness);
 
-
-
+    rnnEvolve(&evolParams, true);
     resetMap();
     resetFrogs();
 }
 
 void newFrame()
 {
-    imguiUpdate(ims);
     doUI();
 
+    updateCamera();
     updateNNs();
     updatePhysics();
     updateMechanics();
@@ -1253,49 +1199,15 @@ void render()
 {
     glClear(GL_COLOR_BUFFER_BIT);
 
-#if 0
-    // draw map
-    const f32 gl = 0;
-    const f32 gr = TILE_SIZE * MAP_WIDTH;
-    const f32 gt = 0;
-    const f32 gb = TILE_SIZE * MAP_HEIGHT;
-    const Color4 grassColor = {40, 89, 24, 255};
-    const Color4 waterColor = {66, 138, 255, 255};
-
-    Quad grassQuad = quadOneColor(gl, gr, gt, gb, grassColor);
-    drawQuadBatch(&grassQuad, 1);
-
-    constexpr i32 MAX_WATER_QUADS = 2048;
-    Quad waterQuad[MAX_WATER_QUADS];
-    i32 waterCount = 0;
-
-    for(i32 i = 0; i < mapSize; ++i) {
-        i32 x = (i % MAP_WIDTH) * TILE_SIZE;
-        i32 y = (i / MAP_WIDTH) * TILE_SIZE;
-
-        if(mapData[i] == MAP_TILE_WATER) {
-            waterQuad[waterCount++] = quadOneColor(x, x+TILE_SIZE, y, y+TILE_SIZE, waterColor);
-            if(waterCount == MAX_WATER_QUADS) {
-                drawQuadBatch(waterQuad, MAX_WATER_QUADS);
-                waterCount = 0;
-            }
-        }
-    }
-
-    drawQuadBatch(waterQuad, waterCount);
-#endif
-
     Transform mapTf;
     mapTf.pos = {0, 0};
     mapTf.size = {TILE_SIZE * MAP_WIDTH, TILE_SIZE * MAP_HEIGHT};
-    Color3 mapCol = {255, 255, 255};
-    drawSpriteBatch(tex_map, &mapTf, &mapCol, 1);
+    drawSpriteBatch(tex_map, &mapTf, 1);
 
     if(dbgOverlayAvgWaterMap) {
         mapTf.pos = {0, 0};
         mapTf.size = {TILE_SIZE * MAP_WIDTH, TILE_SIZE * MAP_HEIGHT};
-        Color3 mapCol = {255, 255, 255};
-        drawSpriteBatch(tex_mapAvgWater, &mapTf, &mapCol, 1);
+        drawSpriteBatch(tex_mapAvgWater, &mapTf, 1);
     }
 
     // draw frogs
@@ -1311,15 +1223,15 @@ void render()
             if(frogTexId[i] == t) {
                 i32 id = batchCount++;
                 tf[id] = frogTf[i];
-                color[id] = speciesColor[curSpeciesTag[i]];
+                color[id] = speciesColor[curGenSpecies[i]];
                 if(batchCount == BATCH_MAX) {
-                    drawSpriteBatch(tex_frog[t], tf, color, BATCH_MAX);
+                    drawSpriteColorBatch(tex_frog[t], tf, color, BATCH_MAX);
                     batchCount = 0;
                 }
             }
         }
 
-        drawSpriteBatch(tex_frog[t], tf, color, batchCount);
+        drawSpriteColorBatch(tex_frog[t], tf, color, batchCount);
     }
 
     if(dbgShowBars) {
@@ -1422,6 +1334,7 @@ i32 main()
     timeInit();
     randSetSeed(time(NULL));
 
+    /*
 #ifdef CONF_DEBUG
     randSetSeed(0x1245);
     testPropagateNN();
@@ -1429,6 +1342,7 @@ i32 main()
     testWideTanh();
     testPropagateRNNWide();
 #endif
+*/
 
     SDL_SetMainReady();
     i32 sdl = SDL_Init(SDL_INIT_VIDEO);

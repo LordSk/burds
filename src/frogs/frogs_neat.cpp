@@ -1194,14 +1194,12 @@ void render()
     Transform mapTf;
     mapTf.pos = {0, 0};
     mapTf.size = {TILE_SIZE * MAP_WIDTH, TILE_SIZE * MAP_HEIGHT};
-    Color3 mapCol = {255, 255, 255};
-    drawSpriteBatch(tex_map, &mapTf, &mapCol, 1);
+    drawSpriteBatch(tex_map, &mapTf, 1);
 
     if(dbgOverlayAvgWaterMap) {
         mapTf.pos = {0, 0};
         mapTf.size = {TILE_SIZE * MAP_WIDTH, TILE_SIZE * MAP_HEIGHT};
-        Color3 mapCol = {255, 255, 255};
-        drawSpriteBatch(tex_mapAvgWater, &mapTf, &mapCol, 1);
+        drawSpriteBatch(tex_mapAvgWater, &mapTf, 1);
     }
 
     // draw frogs
@@ -1219,13 +1217,13 @@ void render()
                 tf[id] = frogTf[i];
                 color[id] = speciesColor[frogCurGen[i]->species];
                 if(batchCount == BATCH_MAX) {
-                    drawSpriteBatch(tex_frog[t], tf, color, BATCH_MAX);
+                    drawSpriteColorBatch(tex_frog[t], tf, color, BATCH_MAX);
                     batchCount = 0;
                 }
             }
         }
 
-        drawSpriteBatch(tex_frog[t], tf, color, batchCount);
+        drawSpriteColorBatch(tex_frog[t], tf, color, batchCount);
     }
 
     if(dbgShowBars) {

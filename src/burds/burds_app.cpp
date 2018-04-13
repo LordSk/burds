@@ -20,7 +20,6 @@
 #define FRAME_DT ((f64)(1.0/FRAMES_PER_SEC))
 
 #define BIRD_COUNT 1024
-#define BIRD_TAG_BITS 3
 constexpr i32 MAX_SPECIES = RNN_MAX_SPECIES;
 
 #define BIRD_BODY_RATIO 0.5f
@@ -55,7 +54,7 @@ constexpr i32 MAX_SPECIES = RNN_MAX_SPECIES;
 #define CLOUD_MIN_X -20000.0
 #define CLOUD_MAX_X 20000.0
 
-#define NEURAL_NET_LAYERS { 6, 8, 4 }
+#define NEURAL_NET_LAYERS { 6, 6, 4 }
 
 struct BirdInput
 {
@@ -117,7 +116,7 @@ RecurrentNeuralNet* nextGenNN[BIRD_COUNT];
 i32 curGenSpecies[BIRD_COUNT];
 i32 nextSpeciesTag[BIRD_COUNT];
 RnnSpeciation speciation;
-RnnGeneticEnv genEnv;
+RnnEvolutionParams genEnv;
 
 i32 birdAppleEatenCount[BIRD_COUNT];
 f32 birdDistToNextApple[BIRD_COUNT];
@@ -139,6 +138,7 @@ i32 dbgViewerBirdId = 0;
 bool dbgShowObjLines = true;
 bool dbgHightlightBird = true;
 bool dbgFollowBird = false;
+bool dbgTimeMaxSpeed = false;
 
 struct GenerationStats {
     i32 number = 1;
@@ -439,9 +439,11 @@ void run()
         render();
         window.swap();
 
-        const i64 frameDtMicro = FRAME_DT/timeScale * 1000000;
-        while(((frameDtMicro - timeToMicrosec(timeGet() - t0)) / 1000) > 1) {
-            _mm_pause();
+        if(!dbgTimeMaxSpeed) {
+            const i64 frameDtMicro = FRAME_DT/timeScale * 1000000;
+            while(((frameDtMicro - timeToMicrosec(timeGet() - t0)) / 1000) > 1) {
+                _mm_pause();
+            }
         }
     }
 }
@@ -696,6 +698,7 @@ void ui_simOptions()
     ImGui::Begin("Simulation");
 
     ImGui::SliderInt("time scale", &timeScale, 1, 20);
+    ImGui::Checkbox("Max speed", &dbgTimeMaxSpeed);
     ImGui::Checkbox("Show objective lines", &dbgShowObjLines);
     ImGui::Checkbox("Highlight bird", &dbgHightlightBird);
     ImGui::Checkbox("Follow bird", &dbgFollowBird);
@@ -771,7 +774,11 @@ void updateNNs()
         curGenNN[i]->setInputs(inputs, arr_count(inputs));
     }
 
+#ifdef CONF_DEBUG
     rnnPropagate(aliveNN, aliveCount, &nnDef);
+#else
+    rnnPropagateWide(aliveNN, aliveCount, &nnDef);
+#endif
 
     // get neural net output
     const i32 firstOutputId = nnDef.inputNeuronCount;
