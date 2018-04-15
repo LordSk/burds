@@ -22,6 +22,25 @@ typedef __m128d w128d;
 #define wide_f64_blendv(wa, wb, mask) _mm_blendv_pd(wa, wb, mask)
 #define wide_f64_less_than(wa, wb) _mm_cmplt_pd(wa, wb)
 
+inline void outputNormalizeTanh(f64* out, const i32 count)
+{
+    for(i32 i = 0; i < count; i++) {
+        out[i] = (out[i] + 1.0) * 0.5;
+    }
+}
+
+inline void outputNormalizeReLu(f64* out, const i32 count)
+{
+    f64 m = 0.0;
+    for(i32 i = 0; i < count; i++) {
+        m = max(m, out[i]);
+    }
+    if(m < 1.0) m = 1.0;
+    for(i32 i = 0; i < count; i++) {
+        out[i] = out[i] / m;
+    }
+}
+
 struct NeuralNet
 {
     f64* values;
@@ -118,18 +137,17 @@ void rnnSpeciationInit(RnnSpeciation* speciation, i32* species, RecurrentNeuralN
                        const i32 popCount, const RecurrentNeuralNetDef& rnnDef);
 void rnnPropagate(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef* def);
 void rnnPropagateWide(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef* def);
-void testWideTanh();
 
 
 void crossover(f64* outWeights, f64* parentBWeights,
                f64* parentAWeights, i32 weightCount);
 
+void rnnEvolve(RnnEvolutionParams* params, bool verbose = false);
+
+void testWideTanh();
 void testPropagateNN();
 void testPropagateRNN();
 void testPropagateRNNWide();
-
-
-void rnnEvolve(RnnEvolutionParams* params, bool verbose = false);
 
 void ImGui_NeuralNet(NeuralNet* nn, NeuralNetDef* def);
 void ImGui_RecurrentNeuralNet(RecurrentNeuralNet* nn, RecurrentNeuralNetDef* def);

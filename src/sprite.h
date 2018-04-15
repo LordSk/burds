@@ -2,13 +2,13 @@
 #include "base.h"
 #include "vec_math.h"
 
-typedef struct
+struct Transform
 {
     Vec2 pos;
     Vec2 size;
     Vec2 center;
     f32 rot;
-} Transform;
+};
 
 struct Color3
 {

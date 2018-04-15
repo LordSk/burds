@@ -10,6 +10,10 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "imgui/imgui_internal.h"
 
+#define ACTFUNC_TANH 0x1
+#define ACTFUNC_RELU 0x2
+#define ACTIVATION_FUNC ACTFUNC_TANH
+
 RnnSpeciation::~RnnSpeciation()
 {
     if(speciesRep) {
@@ -18,9 +22,17 @@ RnnSpeciation::~RnnSpeciation()
 }
 
 #define sigmoid(val) (1.0 / (1.0 + expf(-val)))
-#define hidden_activate(val) tanh(clamp(val, -10.0, 10.0))
-#define output_activate(val) tanh(clamp(val, -10.0, 10.0))
 #define pow2(val) (val * val)
+
+#if ACTIVATION_FUNC == ACTFUNC_TANH
+    #define activate(val) tanh(clamp(val, -10.0, 10.0))
+    #define activate_wide(val) wide_f64_tanh(val)
+#endif
+#if ACTIVATION_FUNC == ACTFUNC_RELU
+    #define activate(val) max(0.0, min(val, 10000000.0))
+    #define activate_wide(val) wide_f64_max(wide_f64_zero(), wide_f64_min(val, wide_f64_set1(10000000.0)))
+#endif
+
 
 inline f64 exp1(f64 x)
 {
@@ -137,7 +149,7 @@ void nnPropagate(NeuralNet** nn, const i32 nnCount, const NeuralNetDef* def)
                 }
                 value += bias; // bias
 
-                neuronCurValues[n] = hidden_activate(value);
+                neuronCurValues[n] = activate(value);
                 neuronWeights += prevLayerNeuronCount;
             }
 
@@ -369,7 +381,7 @@ void rnnPropagate(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeu
                 for(i32 s = 0; s < hiddenNeuronCount; ++s) {
                     value += prevHiddenWeights[s] * prevHiddenValues[s];
                 }
-                value = hidden_activate(value);
+                value = activate(value);
                 assert(value == value); // nan check
                 hiddenStateVals[n] = value;
 
@@ -392,7 +404,7 @@ void rnnPropagate(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeu
             for(i32 s = 0; s < prevNeuronCount; ++s) {
                 value += weights[s] * lastHiddenVals[s];
             }
-            value = output_activate(value);
+            value = activate(value);
             assert(value == value);  // nan check
             output[n] = value;
 
@@ -450,8 +462,8 @@ void rnnPropagateWide(RecurrentNeuralNet** nn, const i32 nnCount, const Recurren
                 }
                 value[0] += bias; // bias
                 value[1] += bias; // bias
-                hiddenStateVals[n] = hidden_activate(value[0]);
-                hiddenStateVals[n+1] = hidden_activate(value[1]);
+                hiddenStateVals[n] = activate(value[0]);
+                hiddenStateVals[n+1] = activate(value[1]);
 
                 weights += prevNeuronCount * 2;
                 prevHiddenWeights += hiddenNeuronCount * 2;
@@ -512,7 +524,7 @@ void rnnPropagateWide(RecurrentNeuralNet** nn, const i32 nnCount, const Recurren
             const i32 hiddenNeuronCountHalf = def->layerNeuronCount[l] / 2;
 
             for(i32 n = 0; n < hiddenNeuronCountHalf; n++) {
-                w128d value = wide_f64_zero();
+                w128d value = bias;
                 // input * inputWeights
                 for(i32 s = 0; s < prevNeuronCountHalf; s++) {
                     value = wide_f64_add(value,
@@ -534,8 +546,7 @@ void rnnPropagateWide(RecurrentNeuralNet** nn, const i32 nnCount, const Recurren
                                            )
                              );
                 }
-                value = wide_f64_add(value, bias); // bias
-                hiddenStateVals[n] = wide_f64_tanh(value); // activate
+                hiddenStateVals[n] = activate_wide(value); // activate
 
                 weights += prevNeuronCountHalf * 2;
                 prevHiddenWeights += hiddenNeuronCountHalf * 2;
@@ -549,7 +560,7 @@ void rnnPropagateWide(RecurrentNeuralNet** nn, const i32 nnCount, const Recurren
         const i32 prevNeuronCountHalf = def->layerNeuronCount[layerCount-2] / 2;
         w128d* lastHiddenVals = output - prevNeuronCountHalf;
         for(i32 n = 0; n < outputNeuronCountHalf; ++n) {
-            w128d value = wide_f64_zero();
+            w128d value = bias; // bias
             // hiddenState * outputWeights
             for(i32 s = 0; s < prevNeuronCountHalf; ++s) {
                 value = wide_f64_add(value,
@@ -560,10 +571,7 @@ void rnnPropagateWide(RecurrentNeuralNet** nn, const i32 nnCount, const Recurren
                                                    )
                                      );
             }
-            value = wide_f64_add(value, bias); // bias
-            // activate
-            value = wide_f64_tanh(value);
-            output[n] = wide_f64_mul(wide_f64_add(value, one), half);
+            output[n] = activate_wide(value); // activate
 
             weights += prevNeuronCountHalf * 2;
         }
@@ -639,7 +647,7 @@ void testPropagateNN()
         values[i] += inputs[0] * weights1[i*2];
         values[i] += inputs[1] * weights1[i*2+1];
         values[i] += bias;
-        values[i] = hidden_activate(values[i]);
+        values[i] = activate(values[i]);
     }
 
     f64 outputTotal = 0;
@@ -752,7 +760,7 @@ void testPropagateRNN()
             value += prevHiddenVals[2] * prevHiddenWeights[i*4+2];
             value += prevHiddenVals[3] * prevHiddenWeights[i*4+3];
             value += bias;
-            hiddenVals[i] = hidden_activate(value);
+            hiddenVals[i] = activate(value);
         }
 
         for(i32 i = 0; i < 2; ++i) {
@@ -764,7 +772,7 @@ void testPropagateRNN()
             value += prevHiddenVals2[0] * prevHiddenWeights2[i*2];
             value += prevHiddenVals2[1] * prevHiddenWeights2[i*2+1];
             value += bias;
-            hiddenVals2[i] = hidden_activate(value);
+            hiddenVals2[i] = activate(value);
         }
 
         for(i32 i = 0; i < 2; ++i) {
@@ -772,7 +780,7 @@ void testPropagateRNN()
             value += hiddenVals2[0] * outWeights[i*2];
             value += hiddenVals2[1] * outWeights[i*2+1];
             value += bias;
-            output[i] = output_activate(value);
+            output[i] = activate(value);
         }
 
         memmove(prevHiddenVals, hiddenVals, sizeof(hiddenVals));
