@@ -57,9 +57,9 @@ constexpr i32 MAP_WATER_AVG_SIZE = MAP_WATER_AVG_WIDTH*MAP_WATER_AVG_HEIGHT;
 
 #define SIMULATION_MAX_TIME 60.0
 
-#define NEURAL_NET_LAYERS { 10, 8, 4 }
+#define NEURAL_NET_LAYERS { 12, 6, 4 }
 
-//#define VISION_WIDTH 32 // is a square
+#define NNTYPE_NN
 
 enum {
     MAP_TILE_GRASS=0,
@@ -137,11 +137,19 @@ u8 frogDead[FROG_COUNT];
 
 f64 frogFitness[FROG_COUNT];
 
+#ifdef NNTYPE_RNN
 RnnSpeciation speciation;
 RnnEvolutionParams evolParams;
 RecurrentNeuralNetDef nnDef;
 RecurrentNeuralNet* curGenNN[FROG_COUNT];
 RecurrentNeuralNet* nextGenNN[FROG_COUNT];
+#elif defined(NNTYPE_NN)
+NnSpeciation speciation;
+NnEvolutionParams evolParams;
+NeuralNetDef nnDef;
+NeuralNet* curGenNN[FROG_COUNT];
+NeuralNet* nextGenNN[FROG_COUNT];
+#endif
 i32 curGenSpecies[FROG_COUNT];
 i32 nextGenSpecies[FROG_COUNT];
 i32 generationNumber = 0;
@@ -200,15 +208,23 @@ bool init()
     evolParams.nextGenSpecies = nextGenSpecies;
     evolParams.speciation = &speciation;
 
-    evolParams.mutationRate = 3.0;
+    speciation.compT = 0.68;
+    evolParams.mutationRate = 2.0;
 
     resetMap();
     resetFrogColors();
 
     const i32 layers[] = NEURAL_NET_LAYERS;
+
+#ifdef NNTYPE_RNN
     rnnMakeDef(&nnDef, arr_count(layers), layers, 1.0);
     rnnAlloc(curGenNN, FROG_COUNT, nnDef);
     rnnAlloc(nextGenNN, FROG_COUNT, nnDef);
+#elif defined(NNTYPE_NN)
+    nnMakeDef(&nnDef, arr_count(layers), layers, 1.0);
+    nnAlloc(curGenNN, FROG_COUNT, nnDef);
+    nnAlloc(nextGenNN, FROG_COUNT, nnDef);
+#endif
 
     resetSimulation();
 
@@ -217,8 +233,13 @@ bool init()
 
 void cleanup()
 {
+#ifdef NNTYPE_RNN
     rnnDealloc(curGenNN);
     rnnDealloc(nextGenNN);
+#elif defined(NNTYPE_NN)
+    nnDealloc(curGenNN);
+    nnDealloc(nextGenNN);
+#endif
 }
 
 void run()
@@ -531,8 +552,14 @@ void resetSimulation()
     generationNumber = 0;
     curGenStats = {};
     mem_zero(pastGenStats);
+
+#ifdef NNTYPE_RNN
     rnnInit(curGenNN, FROG_COUNT, nnDef);
     rnnSpeciationInit(&speciation, curGenSpecies, curGenNN, FROG_COUNT, nnDef);
+#elif defined(NNTYPE_NN)
+    nnInit(curGenNN, FROG_COUNT, nnDef);
+    nnSpeciationInit(&speciation, curGenSpecies, curGenNN, FROG_COUNT, nnDef);
+#endif
 }
 
 void ImGui_ColoredRect(const ImVec2& size, const ImVec4& color)
@@ -546,57 +573,6 @@ void ImGui_ColoredRect(const ImVec2& size, const ImVec4& color)
     ImGui::ItemSize(bb);
 
     ImGui::RenderFrame(bb.Min, bb.Max, ImGui::ColorConvertFloat4ToU32(color), false, 0);
-}
-
-void ImGui_NeuralNet(NeuralNet* nn, NeuralNetDef* def)
-{
-    ImGuiWindow* window = ImGui::GetCurrentWindow();
-    if (window->SkipItems)
-        return;
-
-    constexpr i32 cellsPerLine = 10;
-    const ImVec2 cellSize(10, 10);
-    i32 lines = def->neuronCount / cellsPerLine + 1;
-    ImVec2 size(cellsPerLine * cellSize.x, lines * cellSize.y);
-
-    ImVec2 pos = window->DC.CursorPos;
-    const ImRect bb(pos, pos + size);
-    ImGui::ItemSize(bb);
-
-    for(i32 i = 0; i < def->neuronCount; ++i) {
-        f32 w = clamp(nn->values[i] * 0.5, 0.0, 1.0);
-        u32 color = 0xff000000 | ((u8)(0xff*w) << 16)| ((u8)(0xff*w) << 8)| ((u8)(0xff*w));
-        i32 column = i % cellsPerLine;
-        i32 line = i / cellsPerLine;
-        ImVec2 offset(column * cellSize.x, line * cellSize.y);
-        ImGui::RenderFrame(pos + offset, pos + offset + cellSize, color, false, 0);
-    }
-}
-
-void ImGui_RecurrentNeuralNet(RecurrentNeuralNet* nn, RecurrentNeuralNetDef* def)
-{
-    ImGuiWindow* window = ImGui::GetCurrentWindow();
-    if (window->SkipItems)
-        return;
-
-    constexpr i32 cellsPerLine = 14;
-    const ImVec2 cellSize(10, 10);
-    i32 lines = def->neuronCount / cellsPerLine + 1;
-    ImVec2 size(cellsPerLine * cellSize.x, lines * cellSize.y);
-
-    ImVec2 pos = window->DC.CursorPos;
-    const ImRect bb(pos, pos + size);
-    ImGui::ItemSize(bb);
-
-    for(i32 i = 0; i < def->neuronCount; ++i) {
-        i32 isNormalVal = i < (def->neuronCount - def->hiddenStateNeuronCount);
-        f32 w = clamp(nn->values[i] * 0.5, 0.0, 1.0);
-        u32 color = 0xff000000 | ((u8)(0xff*w) << 16)| ((u8)(0xff*w*isNormalVal) << 8)| ((u8)(0xff*w));
-        i32 column = i % cellsPerLine;
-        i32 line = i / cellsPerLine;
-        ImVec2 offset(column * cellSize.x, line * cellSize.y);
-        ImGui::RenderFrame(pos + offset, pos + offset + cellSize, color, false, 0);
-    }
 }
 
 void ui_frogViewer()
@@ -671,8 +647,11 @@ void ui_frogViewer()
 
     //ImGui::Text("pondAngle: %g", frogClosestPondAngleDiff[dbgViewerFrogId]);
 
+#ifdef NNTYPE_RNN
     ImGui_RecurrentNeuralNet(curGenNN[dbgViewerFrogId], &nnDef);
-    //ImGui_NeuralNet(curGenNN[dbgViewerFrogId], &nnDef);
+#elif defined(NNTYPE_NN)
+    ImGui_NeuralNet(curGenNN[dbgViewerFrogId], nnDef);
+#endif
 
     ImGui::Separator();
 
@@ -854,7 +833,12 @@ inline bool frogIsEating(i32 id)
 
 void updateNNs()
 {
+#ifdef NNTYPE_RNN
     RecurrentNeuralNet* nnets[FROG_COUNT];
+#elif defined(NNTYPE_NN)
+    NeuralNet* nnets[FROG_COUNT];
+#endif
+
     i32 nnetsCount = 0;
     //const f32 waterSmellSquareCount = VISION_WIDTH * VISION_WIDTH * 0.25;
 
@@ -973,7 +957,7 @@ void updateNNs()
 
     for(i32 i = 0; i < FROG_COUNT; ++i) {
         if(frogDead[i]) continue;
-        f64 input[10];
+        f64 input[12];
         assert(arr_count(input) == nnDef.inputNeuronCount);
 
         input[0] = frogWaterSensors[i].sens[0];
@@ -981,21 +965,32 @@ void updateNNs()
         input[2] = frogWaterSensors[i].sens[2];
         input[3] = frogWaterSensors[i].sens[3];
         input[4] = frogClosestPondAngleDiff[i];
-        input[5] = ((frogJumpTime[i] == 0) | ((frogTongueTime[i] == 0) << 1)) / 3.0;
-        input[6] = frogHydration[i] / HYDRATION_TOTAL;
-        input[7] = frogEnergy[i] / ENERGY_TOTAL;
-        input[8] = frogPos[i].x / (MAP_WIDTH * TILE_SIZE);
-        input[9] = frogPos[i].y / (MAP_HEIGHT * TILE_SIZE);
+        input[5] = frogJumpTime[i] == 0;
+        input[6] = frogTongueTime[i] == 0;
+        input[7] = frogHydration[i] / HYDRATION_TOTAL;
+        input[8] = frogEnergy[i] / ENERGY_TOTAL;
+        input[9] = frogPos[i].x / (MAP_WIDTH * TILE_SIZE); // TODO: useless, not markovian
+        input[10] = frogPos[i].y / (MAP_HEIGHT * TILE_SIZE); // replace with forward sensor detecting map border
+        input[11] = frogAngle[i] / TAU;
 
         curGenNN[i]->setInputs(input, arr_count(input));
         nnets[nnetsCount++] = curGenNN[i];
     }
 
-#ifdef CONF_DEBUG
-    rnnPropagate(nnets, nnetsCount, &nnDef);
-#else
-    rnnPropagateWide(nnets, nnetsCount, &nnDef);
+#ifdef NNTYPE_RNN
+    #ifdef CONF_DEBUG
+        rnnPropagate(nnets, nnetsCount, nnDef);
+    #else
+        rnnPropagateWide(nnets, nnetsCount, nnDef);
+    #endif
+#elif defined(NNTYPE_NN)
+    #ifdef CONF_DEBUG
+        nnPropagate(nnets, nnetsCount, nnDef);
+    #else
+        nnPropagate(nnets, nnetsCount, nnDef); // TODO: make wide
+    #endif
 #endif
+
 
     for(i32 i = 0; i < FROG_COUNT; ++i) {
         if(frogDead[i]) continue;
@@ -1062,6 +1057,13 @@ void updateMechanics()
             frogHydration[i] = 0;
             frogDead[i] = true;
             curGenStats.deathsByDehydratation++;
+
+            const i32 mx = frogPos[i].x / TILE_SIZE;
+            const i32 my = frogPos[i].y / TILE_SIZE;
+            if(mx <= 0 || mx >= MAP_WIDTH ||
+               my <= 0 || my >= MAP_HEIGHT) {
+                curGenStats.deathsByBorder++;
+            }
         }
     }
 
@@ -1216,8 +1218,15 @@ void newGeneration()
     LOG("#%d maxFitness=%.5f avg=%.5f", generationNumber,
         lastGenStats.maxFitness, lastGenStats.avgFitness);
 
+#ifdef NNTYPE_RNN
     rnnEvolve(&evolParams, true);
-    resetMap();
+#elif defined(NNTYPE_NN)
+    nnEvolve(&evolParams, true);
+#endif
+
+    if((generationNumber) % 10 == 0) {
+        resetMap();
+    }
     resetFrogs();
 }
 
@@ -1411,7 +1420,7 @@ i32 main()
 
 #ifdef CONF_DEBUG
     randSetSeed(0x1245);
-    testPropagateNN();
+    //testPropagateNN();
     testPropagateRNN();
     testWideTanh();
     testPropagateRNNWide();

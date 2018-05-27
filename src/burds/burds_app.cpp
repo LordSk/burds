@@ -14,8 +14,6 @@
 #include "imgui/imgui_internal.h"
 #include "imgui/imgui_sdl2_setup.h"
 
-#define WINDOW_WIDTH 1600
-#define WINDOW_HEIGHT 900
 #define FRAMES_PER_SEC 60.0
 #define FRAME_DT ((f64)(1.0/FRAMES_PER_SEC))
 
@@ -54,7 +52,10 @@ constexpr i32 MAX_SPECIES = RNN_MAX_SPECIES;
 #define CLOUD_MIN_X -20000.0
 #define CLOUD_MAX_X 20000.0
 
-#define NEURAL_NET_LAYERS { 6, 6, 4 }
+#define NEURAL_NET_LAYERS { 6, 4, 4 }
+
+#define NNTYPE_NN
+//#define NNTYPE_RNN
 
 struct BirdInput
 {
@@ -110,13 +111,21 @@ Transform appleTf[BIRD_COUNT];
 
 Line targetLine[BIRD_COUNT];
 
+#ifdef NNTYPE_RNN
 RecurrentNeuralNetDef nnDef;
 RecurrentNeuralNet* curGenNN[BIRD_COUNT];
 RecurrentNeuralNet* nextGenNN[BIRD_COUNT];
-i32 curGenSpecies[BIRD_COUNT];
-i32 nextSpeciesTag[BIRD_COUNT];
 RnnSpeciation speciation;
 RnnEvolutionParams genEnv;
+#elif defined(NNTYPE_NN)
+NeuralNetDef nnDef;
+NeuralNet* curGenNN[BIRD_COUNT];
+NeuralNet* nextGenNN[BIRD_COUNT];
+NnSpeciation speciation;
+NnEvolutionParams genEnv;
+#endif
+i32 curGenSpecies[BIRD_COUNT];
+i32 nextSpeciesTag[BIRD_COUNT];
 
 i32 birdAppleEatenCount[BIRD_COUNT];
 f32 birdDistToNextApple[BIRD_COUNT];
@@ -366,13 +375,18 @@ void resetSimulation()
     lastGenStats = {};
     mem_zero(pastGenStats);
 
+#ifdef NNTYPE_RNN
     rnnInit(curGenNN, BIRD_COUNT, nnDef);
     rnnSpeciationInit(&speciation, curGenSpecies, curGenNN, BIRD_COUNT, nnDef);
+#elif defined(NNTYPE_NN)
+    nnInit(curGenNN, BIRD_COUNT, nnDef);
+    nnSpeciationInit(&speciation, curGenSpecies, curGenNN, BIRD_COUNT, nnDef);
+#endif
 }
 
 bool init()
 {
-    if(!window.init("Burds [RNN]", "burds_app_imgui.ini")) {
+    if(!window.init("Burds [NN]", "burds_app_imgui.ini", 1920, 1080, true)) {
         return false;
     }
 
@@ -406,9 +420,16 @@ bool init()
     timeScale = 1.0f;
 
     const i32 layers[] = NEURAL_NET_LAYERS;
+
+#ifdef NNTYPE_RNN
     rnnMakeDef(&nnDef, sizeof(layers) / sizeof(layers[0]), layers, 1.f);
     rnnAlloc(curGenNN, BIRD_COUNT, nnDef);
     rnnAlloc(nextGenNN, BIRD_COUNT, nnDef);
+#elif defined(NNTYPE_NN)
+    nnMakeDef(&nnDef, sizeof(layers) / sizeof(layers[0]), layers, 1.f);
+    nnAlloc(curGenNN, BIRD_COUNT, nnDef);
+    nnAlloc(nextGenNN, BIRD_COUNT, nnDef);
+#endif
 
     genEnv.popCount = BIRD_COUNT;
     genEnv.curGenSpecies = curGenSpecies;
@@ -418,6 +439,10 @@ bool init()
     genEnv.rnnDef = &nnDef;
     genEnv.fitness = birdFitness;
     genEnv.speciation = &speciation;
+
+    genEnv.mutationRate = 2.0;
+    genEnv.mutationStep = 1.0;
+    speciation.compT = 0.8;
 
     resetSimulation();
 
@@ -572,7 +597,11 @@ void ui_birdViewer()
 
     ImGui::Separator();
 
-    ImGui_RecurrentNeuralNet(curGenNN[dbgViewerBirdId], &nnDef);
+#ifdef NNTYPE_RNN
+    ImGui_RecurrentNeuralNet(curGenNN[dbgViewerBirdId], nnDef);
+#elif defined(NNTYPE_NN)
+    ImGui_NeuralNet(curGenNN[dbgViewerBirdId], nnDef);
+#endif
 
     ImGui::Separator();
 
@@ -605,16 +634,16 @@ void ui_birdViewer()
 
     ImGui::BeginGroup();
     ImGui::TextColored(titleColor, "Output");
-    f32 left = birdInput[dbgViewerBirdId].left;
-    f32 right = birdInput[dbgViewerBirdId].right;
-    ImGui_ColoredRect(ImVec2(20,20), ImVec4(left/255.0, right/255.0, 0, 1));
+    f32 left = birdInput[dbgViewerBirdId].left / 255.0;
+    f32 right = birdInput[dbgViewerBirdId].right / 255.0;
+    ImGui_ColoredRect(ImVec2(20,20), ImVec4(left, right, 0, 1));
     ImGui::SameLine();
 
-    f64 flap = birdInput[dbgViewerBirdId].flap / 255.0;
+    f32 flap = birdInput[dbgViewerBirdId].flap / 255.0;
     ImGui_ColoredRect(ImVec2(20,20), ImVec4(0, flap, flap, 1));
     ImGui::SameLine();
 
-    f64 brake = birdInput[dbgViewerBirdId].brake / 255.0;
+    f32 brake = birdInput[dbgViewerBirdId].brake / 255.0;
     ImGui_ColoredRect(ImVec2(20,20), ImVec4(brake, 0, 0, 1));
     ImGui::EndGroup();
 
@@ -736,7 +765,11 @@ void doUI()
 
 void updateNNs()
 {
+#ifdef NNTYPE_RNN
     RecurrentNeuralNet* aliveNN[BIRD_COUNT];
+#elif defined(NNTYPE_NN)
+    NeuralNet* aliveNN[BIRD_COUNT];
+#endif
     i32 aliveCount = 0;
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
@@ -774,27 +807,31 @@ void updateNNs()
         curGenNN[i]->setInputs(inputs, arr_count(inputs));
     }
 
-#ifdef CONF_DEBUG
-    rnnPropagate(aliveNN, aliveCount, &nnDef);
-#else
-    rnnPropagateWide(aliveNN, aliveCount, &nnDef);
+#ifdef NNTYPE_RNN
+    #ifdef CONF_DEBUG
+        rnnPropagate(aliveNN, aliveCount, nnDef);
+    #else
+        rnnPropagateWide(aliveNN, aliveCount, nnDef);
+    #endif
+#elif defined(NNTYPE_NN)
+    #ifdef CONF_DEBUG
+        nnPropagate(aliveNN, aliveCount, nnDef);
+    #else
+        nnPropagate(aliveNN, aliveCount, nnDef); // TODO: make wide
+    #endif
 #endif
 
     // get neural net output
-    const i32 firstOutputId = nnDef.inputNeuronCount;
     const i32 outputCount = nnDef.outputNeuronCount;
 
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         if(birdDead[i]) continue;
         f64 out[4];
         assert(arr_count(out) == nnDef.outputNeuronCount);
-        memmove(out, &curGenNN[i]->values[firstOutputId], sizeof(out[0]) * outputCount);
+        memmove(out, curGenNN[i]->output, sizeof(out[0]) * outputCount);
 
         // tanh
-        out[0] = (out[0] + 1.0) * 0.5;
-        out[1] = (out[1] + 1.0) * 0.5;
-        out[2] = (out[2] + 1.0) * 0.5;
-        out[3] = (out[3] + 1.0) * 0.5;
+        outputNormalizeTanh(out, arr_count(out));
 
         assert(out[0] >= 0 && out[0] <= 1.0);
         assert(out[1] >= 0 && out[1] <= 1.0);
@@ -860,32 +897,16 @@ void updateMechanics()
     }
 
     // calculate fitness
-#if 1
     for(i32 i = 0; i < BIRD_COUNT; ++i) {
         if(birdDead[i]) continue;
         f64 applesFactor = birdAppleEatenCount[i];
-        f64 shortDistFactor = APPLE_RADIUS / min(birdShortestDistToNextApple[i], 5000); // 0.0 -> 1.0
-        //f64 distFactor = APPLE_RADIUS / min(vec2Distance(&birdPos[i], &appleTf[i].pos), 5000); // 0.0 -> 1.0
         f64 distFactor = 1.0 - (min(vec2Distance(&birdPos[i], &appleTf[i].pos), 2000) / 2000.0); // 0.0 -> 1.0
         f64 healthFactor = birdHealth[i] / HEALTH_MAX;
 
-        //birdFitnessAcc[i] += distFactor * distFactor * distFactor * shortDistFactor * healthFactor;
-        //birdFitness[i] = birdFitnessAcc[i] * (applesFactor + 1.0);
         birdFitnessAcc[i] += (healthFactor + distFactor * distFactor) * FRAME_DT;
-        birdFitness[i] = 1.0 + birdFitnessAcc[i];
+        birdFitness[i] = birdFitnessAcc[i];
         birdFitness[i] += birdFitness[i] * 0.1 * applesFactor;
     }
-#else
-    for(i32 i = 0; i < BIRD_COUNT; ++i) {
-        if(birdDead[i]) continue;
-
-        if(birdDistToNextAppleOld[i] > birdDistToNextApple[i]) {
-           birdFitnessAcc[i] += (birdDistToNextAppleOld[i] - birdDistToNextApple[i]) / 1000.0;
-        }
-
-        birdFitness[i] = 1.0 + birdFitnessAcc[i] * (birdAppleEatenCount[i] + 1.0);
-    }
-#endif
 
     f64 maxFitness = 0.0;
     f64 totalFitness = 0.0;
@@ -987,11 +1008,11 @@ void updatePhysics()
         f64 brake = 0;
 
         if(birdFlapLeftCd[i] <= 0.0f) {
-            if(birdInput[i].brake) {
-                brake = birdInput[i].brake / 255.0;
-            }
-            else if(birdInput[i].flap) {
+            if(birdInput[i].flap) {
                 flap = birdInput[i].flap / 255.0;
+            }
+            else if(birdInput[i].brake) {
+                brake = birdInput[i].brake / 255.0;
             }
         }
 
@@ -1062,7 +1083,7 @@ void updateCamera()
     else {
         SDL_SetRelativeMouseMode((SDL_bool)FALSE);
     }
-    setView(viewX, viewY, WINDOW_WIDTH*viewZoom, WINDOW_HEIGHT*viewZoom);
+    setView(viewX, viewY, window.winWidth*viewZoom, window.winHeight*viewZoom);
 }
 
 struct FitnessPair
@@ -1083,7 +1104,15 @@ void nextGeneration()
     LOG("#%d maxFitness=%.5f avg=%.5f", generationNumber,
         lastGenStats.maxFitness, lastGenStats.avgFitness);
 
+#ifdef NNTYPE_RNN
     rnnEvolve(&genEnv, true);
+#elif defined(NNTYPE_NN)
+    nnEvolve(&genEnv, true);
+#endif
+
+    if((curGenStats.number) % 10 == 0) {
+        resetApplePath();
+    }
     resetBirds();
 }
 
@@ -1102,8 +1131,8 @@ void newFrame()
     doUI();
 
     if(dbgFollowBird) {
-        viewX = birdPos[dbgViewerBirdId].x - WINDOW_WIDTH * viewZoom * 0.5;
-        viewY = birdPos[dbgViewerBirdId].y - WINDOW_HEIGHT * viewZoom * 0.5;
+        viewX = birdPos[dbgViewerBirdId].x - window.winWidth * viewZoom * 0.5;
+        viewY = birdPos[dbgViewerBirdId].y - window.winHeight * viewZoom * 0.5;
     }
 
     updateCamera();
@@ -1198,9 +1227,9 @@ void render()
 
     // sky
     const f32 skyl = viewX;
-    const f32 skyr = viewX + WINDOW_WIDTH * viewZoom;
+    const f32 skyr = viewX + window.winWidth * viewZoom;
     const f32 skyt = viewY;
-    const f32 skyb = min(GROUND_Y, viewY + WINDOW_HEIGHT * viewZoom);
+    const f32 skyb = min(GROUND_Y, viewY + window.winHeight * viewZoom);
     const Color4 skyTopColor = {12, 129, 255, 255};
     const Color4 skyBotColor = {150, 220, 255, 255};
     Quad skyQuad;
@@ -1224,9 +1253,9 @@ void render()
 
     // ground
     const f32 gl = viewX;
-    const f32 gr = viewX + WINDOW_WIDTH * viewZoom;
+    const f32 gr = viewX + window.winWidth * viewZoom;
     const f32 gt = GROUND_Y;
-    const f32 gb = max(GROUND_Y, viewY + WINDOW_HEIGHT * viewZoom);
+    const f32 gb = max(GROUND_Y, viewY + window.winHeight * viewZoom);
     const Color4 groundColor = {40, 89, 24, 255};
     Quad groundQuad = quadOneColor(gl, gr, gt, gb, groundColor);
     drawQuadBatch(&groundQuad, 1);
@@ -1294,8 +1323,14 @@ void render()
 void cleanup()
 {
     window.cleanup();
+
+#ifdef NNTYPE_RNN
     rnnDealloc(curGenNN);
     rnnDealloc(nextGenNN);
+#elif defined(NNTYPE_NN)
+    nnDealloc(curGenNN);
+    nnDealloc(nextGenNN);
+#endif
 }
 
 };

@@ -16,10 +16,16 @@ struct AppWindow
     SDL_Window* sdlWin;
     SDL_GLContext glContext;
     ImGuiGLSetup* ims;
+    i32 winWidth;
+    i32 winHeight;
     bool running = true;
 
-    bool init(const char* title, const char* configName)
+    bool init(const char* title, const char* configName, i32 width = WINDOW_WIDTH,
+              i32 height = WINDOW_HEIGHT, bool fullscreen = false)
     {
+        winWidth = width;
+        winHeight = height;
+
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
@@ -27,8 +33,8 @@ struct AppWindow
         sdlWin = SDL_CreateWindow(title,
                                   SDL_WINDOWPOS_CENTERED,
                                   SDL_WINDOWPOS_CENTERED,
-                                  WINDOW_WIDTH, WINDOW_HEIGHT,
-                                  SDL_WINDOW_OPENGL);
+                                  width, height,
+                                  SDL_WINDOW_OPENGL|(fullscreen ? SDL_WINDOW_FULLSCREEN:0));
 
         if(!sdlWin) {
             LOG("ERROR: can't create SDL2 window (%s)",  SDL_GetError());
@@ -53,17 +59,17 @@ struct AppWindow
             return false;
         }
 
-        if(!initSpriteState(WINDOW_WIDTH, WINDOW_HEIGHT)) {
+        if(!initSpriteState(winWidth, winHeight)) {
             return false;
         }
 
-        ims = imguiInit(WINDOW_WIDTH, WINDOW_HEIGHT, configName);
+        ims = imguiInit(winWidth, winHeight, configName);
         if(!ims) {
             LOG("ERROR: could not init imgui");
         }
 
         glClearColor(0.2, 0.2, 0.2, 1.0f);
-        setView(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
+        setView(0, 0, winWidth, winHeight);
 
         return true;
     }

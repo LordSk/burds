@@ -508,7 +508,7 @@ static i32 selectRoulette(const i32 count, f64* fitness, f64 totalFitness)
     return 0;
 }
 
-static void crossover(Genome* dest, const Genome* parentA, const Genome* parentB)
+static void rnnCrossover(Genome* dest, const Genome* parentA, const Genome* parentB)
 {
     constexpr f64 geneStayDisabledChance = 0.75;
 
@@ -892,7 +892,7 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
                 parentA = mateB;
                 parentB = mateA;
             }
-            crossover(nextGenomes[i], parentA, parentB);
+            rnnCrossover(nextGenomes[i], parentA, parentB);
         }
     }
 
@@ -1221,7 +1221,7 @@ void neatTestTryReproduce(const Genome& g1, const Genome& g2)
 
 void neatTestCrossover(const Genome* parentA, const Genome* parentB, Genome* dest)
 {
-    crossover(dest, parentA, parentB);
+    rnnCrossover(dest, parentA, parentB);
 }
 
 f64 neatTestCompability(const Genome* ga, const Genome* gb, const NeatEvolutionParams& params)

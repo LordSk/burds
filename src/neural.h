@@ -3,7 +3,7 @@
 #include <intrin.h>
 #include <emmintrin.h>
 
-#define MAX_LAYERS 10
+#define NN_MAX_LAYERS 10
 #define RNN_MAX_SPECIES 1024
 
 // wide types
@@ -46,12 +46,16 @@ struct NeuralNet
     f64* values;
     f64* weights;
     f64* output;
+
+    inline void setInputs(f64* inputArr, const i32 count) {
+        memmove(values, inputArr, sizeof(values[0]) * count);
+    }
 };
 
 struct NeuralNetDef
 {
     i32 layerCount;
-    i32 layerNeuronCount[MAX_LAYERS];
+    i32 layerNeuronCount[NN_MAX_LAYERS];
     i32 neuronCount;
     i32 neuralNetSize;
     i32 inputNeuronCount;
@@ -60,10 +64,44 @@ struct NeuralNetDef
     f64 bias;
 };
 
+struct NnSpeciation
+{
+    NeuralNet* speciesRep[RNN_MAX_SPECIES] = {0};
+    i32 speciesPopCount[RNN_MAX_SPECIES] = {0};
+    u16 stagnation[RNN_MAX_SPECIES] = {0};
+    f64 maxFitness[RNN_MAX_SPECIES] = {0};
+    f64 compT = 0.7; // compatibility threshold
+
+    ~NnSpeciation();
+};
+
+struct NnEvolutionParams
+{
+    i32 popCount;
+    f64* fitness;
+    NeuralNet** curGenRNN;
+    NeuralNet** nextGenRNN;
+    NeuralNetDef* rnnDef;
+    i32* curGenSpecies;
+    i32* nextGenSpecies;
+    NnSpeciation* speciation;
+    f64 mutationRate = 2.0;
+    f64 mutationStep = 0.5;
+    f64 mutationReset = 0.1;
+};
+
 void nnMakeDef(NeuralNetDef* def, const i32 layerCount, const i32 layerNeuronCount[], f64 bias);
-u8* nnAlloc(NeuralNet** nn, const i32 nnCount, const NeuralNetDef* def);
-void nnInitRandom(NeuralNet** nn, const i32 nnCount, const NeuralNetDef* def);
-void nnPropagate(NeuralNet** nn, const i32 nnCount, const NeuralNetDef* def);
+u8* nnAlloc(NeuralNet** nn, const i32 nnCount, const NeuralNetDef& def);
+void nnDealloc(NeuralNet** nn);
+void nnCopy(NeuralNet* dest, NeuralNet* src, const NeuralNetDef& def);
+void nnInit(NeuralNet** nn, const i32 nnCount, const NeuralNetDef& def);
+void nnSpeciationInit(NnSpeciation* speciation, i32* species, NeuralNet** nn,
+                      const i32 popCount, const NeuralNetDef& nnDef);
+
+void nnPropagate(NeuralNet** nn, const i32 nnCount, const NeuralNetDef& def);
+
+void nnCrossover(f64* outWeights, f64* parentBWeights, f64* parentAWeights, i32 weightCount);
+void nnEvolve(NnEvolutionParams* params, bool verbose = false);
 
 union alignas(w128d) RecurrentNeuralNet
 {
@@ -91,7 +129,7 @@ union alignas(w128d) RecurrentNeuralNet
 struct RecurrentNeuralNetDef
 {
     i32 layerCount;
-    i32 layerNeuronCount[MAX_LAYERS];
+    i32 layerNeuronCount[NN_MAX_LAYERS];
     i32 neuralNetSize;
     i32 neuronCount;
     i32 inputNeuronCount;
@@ -135,13 +173,10 @@ void rnnCopy(RecurrentNeuralNet* dest, RecurrentNeuralNet* src, const RecurrentN
 void rnnInit(RecurrentNeuralNet** nn, const i32 popCount, const RecurrentNeuralNetDef& def);
 void rnnSpeciationInit(RnnSpeciation* speciation, i32* species, RecurrentNeuralNet** nn,
                        const i32 popCount, const RecurrentNeuralNetDef& rnnDef);
-void rnnPropagate(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef* def);
-void rnnPropagateWide(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef* def);
+void rnnPropagate(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef& def);
+void rnnPropagateWide(RecurrentNeuralNet** nn, const i32 nnCount, const RecurrentNeuralNetDef& def);
 
-
-void crossover(f64* outWeights, f64* parentBWeights,
-               f64* parentAWeights, i32 weightCount);
-
+void rnnCrossover(f64* outWeights, f64* parentBWeights, f64* parentAWeights, i32 weightCount);
 void rnnEvolve(RnnEvolutionParams* params, bool verbose = false);
 
 void testWideTanh();
@@ -149,6 +184,6 @@ void testPropagateNN();
 void testPropagateRNN();
 void testPropagateRNNWide();
 
-void ImGui_NeuralNet(NeuralNet* nn, NeuralNetDef* def);
-void ImGui_RecurrentNeuralNet(RecurrentNeuralNet* nn, RecurrentNeuralNetDef* def);
+void ImGui_NeuralNet(const NeuralNet* nn, const NeuralNetDef& def);
+void ImGui_RecurrentNeuralNet(const RecurrentNeuralNet* nn, const RecurrentNeuralNetDef& def);
 void ImGui_SubPopWindow(const RnnEvolutionParams* env, const struct ImVec4* subPopColors);
