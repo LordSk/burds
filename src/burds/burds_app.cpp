@@ -386,7 +386,7 @@ void resetSimulation()
 
 bool init()
 {
-    if(!window.init("Burds [NN]", "burds_app_imgui.ini", 1920, 1080, true)) {
+	if(!window.init("Burds [NN]", "burds_app_imgui.ini", 1600, 900, false)) {
         return false;
     }
 
@@ -461,8 +461,16 @@ void run()
         }
 
         newFrame();
-        render();
-        window.swap();
+
+		static f64 lastTimeRender = TIME_MILLI();
+		if(dbgTimeMaxSpeed && TIME_MILLI()-lastTimeRender < 500) {
+			ImGui::EndFrame();
+		}
+		else {
+			lastTimeRender = TIME_MILLI();
+			render();
+			window.swap();
+		}
 
         if(!dbgTimeMaxSpeed) {
             const i64 frameDtMicro = FRAME_DT/timeScale * 1000000;

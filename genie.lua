@@ -31,7 +31,8 @@ solution "burds_solution"
 	configuration {"Release"}
 		targetsuffix "_release"
 		flags {
-			"Optimize"
+			"Optimize",
+			"Symbols"
 		}
 		defines {
 			"NDEBUG",

@@ -622,7 +622,7 @@ static void rnnCrossover(Genome* dest, const Genome* parentA, const Genome* pare
     const i32 geneCountOut2 = geneCountOut;
 
     // TODO: purge same connections
-    constexpr auto cmpGenes = [](const Gene& a, const Gene& b, u8 parentA, u8 parentB) {
+	auto cmpGenes = [](const Gene& a, const Gene& b, u8 parentA, u8 parentB) {
         if(a.nodeIn < b.nodeIn) return -1;
         if(a.nodeIn > b.nodeIn) return 1;
         if(a.nodeOut < b.nodeOut) return -1;
@@ -952,7 +952,7 @@ void neatEvolve(Genome** genomes, Genome** nextGenomes, f64* fitness, const i32 
 
         // add connection
         if(randf64(0.0, 1.0) < params.mutateAddConn) {
-            constexpr auto isOutput = [](i32 id, const Genome& g) {
+			auto isOutput = [](i32 id, const Genome& g) {
                 return id >= g.inputNodeCount && id < g.inputNodeCount + g.outputNodeCount;
             };
 
